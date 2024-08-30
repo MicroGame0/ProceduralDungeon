@@ -123,6 +123,7 @@ void ARoomLevel::BeginPlay()
 void ARoomLevel::EndPlay(EEndPlayReason::Type EndPlayReason)
 {
 	Super::EndPlay(EndPlayReason);
+	Room = nullptr;
 }
 
 // Update is called once per frame
@@ -154,19 +155,25 @@ void ARoomLevel::Tick(float DeltaTime)
 
 		if (bIsRoomLocked)
 		{
-			FBox Box = Bounds.GetBox().TransformBy(DungeonTransform);
-
-			DrawDebugLine(World, Box.Min, Box.Max, FColor::Red);
-			DrawDebugLine(World, FVector(Box.Min.X, Box.Min.Y, Box.Max.Z), FVector(Box.Max.X, Box.Max.Y, Box.Min.Z), FColor::Red);
-			DrawDebugLine(World, FVector(Box.Min.X, Box.Max.Y, Box.Max.Z), FVector(Box.Max.X, Box.Min.Y, Box.Min.Z), FColor::Red);
-			DrawDebugLine(World, FVector(Box.Min.X, Box.Max.Y, Box.Min.Z), FVector(Box.Max.X, Box.Min.Y, Box.Max.Z), FColor::Red);
+			FBox Box = Bounds.GetBox();
+			const FVector& Min = Box.Min;
+			const FVector& Max = Box.Max;
+#ifdef T
+			static_assert(false, "T macro is already defined! Please change its name to avoid potential conflicts");
+#endif
+#define T(POINT) DungeonTransform.TransformPosition(POINT)
+			DrawDebugLine(World, T(Min), T(Max), FColor::Red);
+			DrawDebugLine(World, T(FVector(Min.X, Min.Y, Max.Z)), T(FVector(Max.X, Max.Y, Min.Z)), FColor::Red);
+			DrawDebugLine(World, T(FVector(Min.X, Max.Y, Max.Z)), T(FVector(Max.X, Min.Y, Min.Z)), FColor::Red);
+			DrawDebugLine(World, T(FVector(Min.X, Max.Y, Min.Z)), T(FVector(Max.X, Min.Y, Max.Z)), FColor::Red);
+#undef T
 		}
 
 		// Doors
 		for (int i = 0; i < Data->GetNbDoor(); i++)
 		{
 			const bool bIsConnected = !bIsRoomValid || (bIsRoomDataValid && Room->IsConnected(i));
-			const bool bIsDoorValid = Data->IsDoorValid(i);
+			const bool bIsDoorValid = Data->IsDoorValid(i) && !Data->IsDoorDuplicate(i);
 			FDoorDef::DrawDebug(World, bIsDoorValid ? FColor::Blue : FColor::Orange, Data->Doors[i], RoomTransform * DungeonTransform, true, bIsConnected);
 		}
 	}
@@ -245,6 +252,11 @@ void ARoomLevel::SetActorsVisible(bool Visible)
 			// HACK: Don't manage replicated actors as their ActorHiddenInGame is replicated
 			// and will mess up the actor visibility on clients!
 			if (Actor->GetIsReplicated())
+				continue;
+
+			// Discard explicitly ignored actors.
+			// They can have a (Static) Room Visibility Component attached to have a custom occlusion management.
+			if (Actor->ActorHasTag(FName("Ignore Room Culling")))
 				continue;
 
 			Actor->SetActorHiddenInGame(!Visible);

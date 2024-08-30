@@ -1,7 +1,7 @@
 /*
  * MIT License
  *
- * Copyright (c) 2019-2021 Benoit Pelletier
+ * Copyright (c) 2019-2024 Benoit Pelletier
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -52,6 +52,10 @@ void URoomData::InitializeRoom_Implementation(URoom* Room, UDungeonGraph* Dungeo
 {
 }
 
+void URoomData::CleanupRoom_Implementation(URoom* Room, UDungeonGraph* Dungeon) const
+{
+}
+
 FBoxCenterAndExtent URoomData::GetBounds(FTransform Transform) const
 {
 	FBoxCenterAndExtent Bounds = GetIntBounds().ToCenterAndExtent();
@@ -68,6 +72,23 @@ FIntVector URoomData::GetSize() const
 FBoxMinAndMax URoomData::GetIntBounds() const
 {
 	return FBoxMinAndMax(FirstPoint, SecondPoint);
+}
+
+bool URoomData::IsRoomInBounds(const FBoxMinAndMax& Bounds, int DoorIndex, const FDoorDef& DoorDungeonPos) const
+{
+	const FIntVector BoundSize = Bounds.GetSize();
+	if (BoundSize.X == 0 || BoundSize.Y == 0 || BoundSize.Z == 0)
+		return false;
+
+	if (DoorIndex < 0 || DoorIndex >= Doors.Num())
+		return false;
+
+	const FDoorDef& Door = Doors[DoorIndex];
+	FBoxMinAndMax RoomBounds = GetIntBounds();
+	RoomBounds -= Door.Position;
+	RoomBounds.Rotate(DoorDungeonPos.Direction - Door.Direction);
+	RoomBounds += DoorDungeonPos.Position;
+	return Bounds.IsInside(RoomBounds);
 }
 
 #if !(UE_BUILD_SHIPPING) || WITH_EDITOR
@@ -102,6 +123,17 @@ bool URoomData::IsDoorValid(int DoorIndex) const
 		checkNoEntry();
 		return false;
 	}
+}
+
+bool URoomData::IsDoorDuplicate(int DoorIndex) const
+{
+	check(DoorIndex >= 0 && DoorIndex < Doors.Num());
+	for (int i = 0; i < Doors.Num(); ++i)
+	{
+		if (DoorIndex != i && Doors[i] == Doors[DoorIndex])
+			return true;
+	}
+	return false;
 }
 
 #endif // !(UE_BUILD_SHIPPING) || WITH_EDITOR
@@ -157,13 +189,10 @@ EDataValidationResult URoomData::IsDataValid(FDataValidationContext& Context) co
 			}
 
 			// Check if there are no duplicated doors
-			for (int k = i + 1; k < Doors.Num(); ++k)
+			if (IsDoorDuplicate(i))
 			{
-				if (Doors[i] == Doors[k])
-				{
-					VALIDATION_LOG_ERROR(FText::FromString(FString::Printf(TEXT("Room data \"%s\" has duplicated doors: %s."), *GetName(), *Doors[i].ToString())));
-					Result = EDataValidationResult::Invalid;
-				}
+				VALIDATION_LOG_ERROR(FText::FromString(FString::Printf(TEXT("Room data \"%s\" has duplicated doors: %s."), *GetName(), *Doors[i].ToString())));
+				Result = EDataValidationResult::Invalid;
 			}
 		}
 	}

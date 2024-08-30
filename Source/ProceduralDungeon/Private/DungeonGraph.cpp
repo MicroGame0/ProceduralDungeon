@@ -23,7 +23,7 @@
  */
 
 #include "DungeonGraph.h"
-#include "Net/UnrealNetwork.h" // DOREPLIFETIME
+#include "Utils/ReplicationUtils.h"
 #include "ProceduralDungeonLog.h"
 #include "Containers/Queue.h"
 #include "DungeonGenerator.h"
@@ -41,18 +41,28 @@ UDungeonGraph::UDungeonGraph()
 void UDungeonGraph::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(UDungeonGraph, ReplicatedRooms);
+	FDoRepLifetimeParams Params;
+	Params.bIsPushBased = true;
+	DOREPLIFETIME_WITH_PARAMS(UDungeonGraph, ReplicatedRooms, Params);
 }
 
 bool UDungeonGraph::ReplicateSubobjects(UActorChannel* Channel, FOutBunch* Bunch, FReplicationFlags* RepFlags)
 {
-	bool bWroteSomething = Super::ReplicateSubobjects(Channel, Bunch, RepFlags);;
+	bool bWroteSomething = Super::ReplicateSubobjects(Channel, Bunch, RepFlags);
 	for (URoom* Room : ReplicatedRooms)
 	{
 		check(Room);
 		bWroteSomething |= Room->ReplicateSubobject(Channel, Bunch, RepFlags);
 	}
 	return bWroteSomething;
+}
+
+void UDungeonGraph::RegisterReplicableSubobjects(bool bRegister)
+{
+	for (URoom* Room : ReplicatedRooms)
+	{
+		Room->RegisterAsReplicable(bRegister);
+	}
 }
 
 void UDungeonGraph::AddRoom(URoom* Room)
@@ -208,6 +218,13 @@ URoom* UDungeonGraph::GetRoomByIndex(int64 Index) const
 
 void UDungeonGraph::Clear()
 {
+	for (URoom* Room : Rooms)
+	{
+		check(IsValid(Room));
+		const URoomData* Data = Room->GetRoomData();
+		check(IsValid(Data));
+		Data->CleanupRoom(Room, this);
+	}
 	Rooms.Empty();
 }
 
@@ -402,38 +419,57 @@ void UDungeonGraph::SynchronizeRooms()
 	if (Owner->HasAuthority())
 	{
 		Owner->FlushNetDormancy();
+		RegisterReplicableSubobjects(false);
 		CopyRooms(ReplicatedRooms, Rooms);
+		RegisterReplicableSubobjects(true);
+		MARK_PROPERTY_DIRTY_FROM_NAME(UDungeonGraph, ReplicatedRooms, this);
 	}
 	else
+	{
 		CopyRooms(Rooms, ReplicatedRooms);
+	}
+
 	CurrentState = EDungeonGraphState::None;
 }
 
-bool UDungeonGraph::AreRoomsLoaded() const
+bool UDungeonGraph::AreRoomsLoaded(int32& NbRoomLoaded) const
 {
+	NbRoomLoaded = 0;
 	for (URoom* Room : Rooms)
 	{
-		if (!Room->IsInstanceLoaded())
-			return false;
+		if (Room->IsInstanceLoaded())
+			NbRoomLoaded++;
 	}
-	return true;
+	return NbRoomLoaded >= Rooms.Num();
 }
 
-bool UDungeonGraph::AreRoomsUnloaded() const
+bool UDungeonGraph::AreRoomsUnloaded(int32& NbRoomUnloaded) const
 {
+	NbRoomUnloaded = 0;
 	for (URoom* Room : Rooms)
 	{
-		if (IsValid(Room) && !Room->IsInstanceUnloaded())
-			return false;
+		if (!IsValid(Room) || Room->IsInstanceUnloaded())
+			NbRoomUnloaded++;
 	}
-	return true;
+	return NbRoomUnloaded >= Rooms.Num();
 }
 
-bool UDungeonGraph::AreRoomsInitialized() const
+bool UDungeonGraph::AreRoomsInitialized(int32& NbRoomInitialized) const
+{
+	NbRoomInitialized = 0;
+	for (URoom* Room : Rooms)
+	{
+		if (Room->IsInstanceInitialized())
+			NbRoomInitialized++;
+	}
+	return NbRoomInitialized >= Rooms.Num();
+}
+
+bool UDungeonGraph::AreRoomsReady() const
 {
 	for (URoom* Room : Rooms)
 	{
-		if (!Room->IsInstanceInitialized())
+		if (!(IsValid(Room) && Room->IsReady()))
 			return false;
 	}
 	return true;
@@ -453,5 +489,16 @@ void UDungeonGraph::RequestUnload()
 
 void UDungeonGraph::OnRep_Rooms()
 {
+	DungeonLog_InfoSilent("Replicated Rooms Changed! (length: %d)", ReplicatedRooms.Num());
+	for (int i = 0; i < ReplicatedRooms.Num(); ++i)
+	{
+		// Trigger Room List Changed only when all received rooms are valid
+		if (!IsValid(ReplicatedRooms[i]))
+			return;
+
+		DungeonLog_InfoSilent("Replicated Room [%d]: %s", i, *GetNameSafe(ReplicatedRooms[i]));
+	}
+
+	DungeonLog_InfoSilent("Trigger Dungeon Reload!");
 	CurrentState = EDungeonGraphState::RoomListChanged;
 }

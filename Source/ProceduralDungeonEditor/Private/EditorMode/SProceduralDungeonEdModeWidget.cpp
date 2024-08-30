@@ -351,6 +351,12 @@ void SProceduralDungeonEdModeWidget::OnDataAssetChanged()
 	if (IsValidRoomData(EdMode, &CachedData))
 	{
 		DataContentWidget->SetObject(CachedData.Get());
+		if (CachedData->Level.IsNull())
+		{
+			CachedData->Modify();
+			CachedData->Level = EdMode->GetWorld();
+			DungeonEd_LogInfo("Room Data's Level asset filled with current editor's Level.");
+		}
 		DataDelegateHandle = CachedData->OnPropertiesChanged.AddLambda([this](URoomData* Data) { UpdateErrorText(); });
 	}
 
@@ -370,7 +376,7 @@ FReply SProceduralDungeonEdModeWidget::ReparentLevelActor()
 	ULevelScriptBlueprint* LevelBlueprint = World->PersistentLevel->GetLevelScriptBlueprint();
 	if (!IsValid(LevelBlueprint))
 	{
-		DungeonEd_LogInfo("ERROR: Can't Reparent Level Blueprint for an unknown reason.");
+		DungeonEd_LogError("ERROR: Can't Reparent Level Blueprint for an unknown reason.");
 		return FReply::Unhandled();
 	}
 
@@ -468,7 +474,7 @@ FReply SProceduralDungeonEdModeWidget::RemoveInvalidDoors()
 	Data->Modify();
 	for (int i = Data->Doors.Num() - 1; i >= 0; --i)
 	{
-		if (!Data->IsDoorValid(i))
+		if (!Data->IsDoorValid(i) || Data->IsDoorDuplicate(i))
 			Data->Doors.RemoveAt(i);
 	}
 	GEditor->EndTransaction();

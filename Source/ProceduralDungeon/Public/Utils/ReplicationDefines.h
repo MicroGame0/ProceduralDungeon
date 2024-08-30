@@ -1,7 +1,7 @@
 /*
  * MIT License
  *
- * Copyright (c) 2023-2024 Benoit Pelletier
+ * Copyright (c) 2024 Benoit Pelletier
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,24 +22,17 @@
  * SOFTWARE.
  */
 
-#include "RoomVisibilityComponent.h"
-#include "ProceduralDungeonUtils.h"
-#include "ProceduralDungeonLog.h"
-#include "RoomLevel.h"
+#pragma once
 
-URoomVisibilityComponent::URoomVisibilityComponent()
-	: Super()
-{
-}
+#include "Misc/EngineVersionComparison.h"
 
-void URoomVisibilityComponent::OnRoomEnter_Implementation(ARoomLevel* RoomLevel)
-{
-	DungeonLog_InfoSilent("Visibility Component '%s' Enters Room: %s", *GetNameSafe(GetOwner()), *GetNameSafe(RoomLevel));
-	RegisterVisibilityDelegate(RoomLevel, true);
-}
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
+	// Fixup undefined UE_WITH_IRIS for UE4
+	#ifndef UE_WITH_IRIS
+	#define UE_WITH_IRIS 0
+	#endif
 
-void URoomVisibilityComponent::OnRoomExit_Implementation(ARoomLevel* RoomLevel)
-{
-	DungeonLog_InfoSilent("Visibility Component '%s' Exits Room: %s", *GetNameSafe(GetOwner()), *GetNameSafe(RoomLevel));
-	RegisterVisibilityDelegate(RoomLevel, false);
-}
+	#define UE_WITH_SUBOBJECT_LIST 0
+#else
+	#define UE_WITH_SUBOBJECT_LIST 1
+#endif

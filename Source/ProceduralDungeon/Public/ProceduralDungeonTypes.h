@@ -1,7 +1,7 @@
 /*
  * MIT License
  *
- * Copyright (c) 2019-2023 Benoit Pelletier
+ * Copyright (c) 2019-2024 Benoit Pelletier
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -68,6 +68,7 @@ FIntVector PROCEDURALDUNGEON_API ToIntVector(const EDoorDirection& Direction);
 FVector PROCEDURALDUNGEON_API ToVector(const EDoorDirection& Direction);
 FQuat PROCEDURALDUNGEON_API ToQuaternion(const EDoorDirection& Direction);
 FIntVector PROCEDURALDUNGEON_API Rotate(const FIntVector& Pos, const EDoorDirection& Rot);
+FVector PROCEDURALDUNGEON_API Rotate(const FVector& Pos, const EDoorDirection& Rot);
 
 UENUM(BlueprintType, meta = (DisplayName = "Generation Type"))
 enum class EGenerationType : uint8
@@ -84,6 +85,17 @@ enum class ESeedType : uint8
 	AutoIncrement = 1 		UMETA(DisplayName = "Auto Increment", Tooltip = "Get the initial seed and increment at each generation"),
 	Fixed = 2 				UMETA(DisplayName = "Fixed", Tooltip = "Always use initial seed (or you can set it manually via blueprint)"),
 	NbType = 3 				UMETA(Hidden)
+};
+
+// Visibility mode for Room Visibilty Components.
+UENUM(BlueprintType, meta = (DisplayName = "Room Visibility"))
+enum class EVisibilityMode : uint8
+{
+	Default			UMETA(DisplayName = "Same As Room"),
+	ForceVisible	UMETA(DisplayName = "Force Visible"),
+	ForceHidden		UMETA(DisplayName = "Force Hidden"),
+	Custom			UMETA(DisplayName = "Custom"),
+	NbMode			UMETA(Hidden)
 };
 
 USTRUCT(BlueprintType)
@@ -107,6 +119,8 @@ public:
 	FVector GetDoorSize() const;
 	FString GetTypeName() const;
 	FString ToString() const;
+	FDoorDef GetOpposite() const;
+	FBoxCenterAndExtent GetBounds(bool bIncludeOffset = true) const;
 
 	static FVector GetRealDoorPosition(FIntVector DoorCell, EDoorDirection DoorRot, bool includeOffset = true);
 
@@ -118,6 +132,8 @@ public:
 
 // TODO: Use UE built-in TBox<FIntVector> instead?
 // The downside of doing that would be the Center and Extent computation that is slightly different...
+// Also, the IsInside with another box does not consider coincident faces as inside...
+// Also, operators + and += don't mean the same (extending box to include a point instead of shifting the box)...
 struct PROCEDURALDUNGEON_API FBoxMinAndMax
 {
 public:
@@ -129,8 +145,11 @@ public:
 	FBoxMinAndMax(const FIntVector& A, const FIntVector& B);
 
 	FIntVector GetSize() const;
-
 	FBoxCenterAndExtent ToCenterAndExtent() const;
+	bool IsInside(const FIntVector& Cell) const;
+	bool IsInside(const FBoxMinAndMax& Other) const;
+	void Rotate(const EDoorDirection& Rot);
+	FString ToString() const;
 
 	static bool Overlap(const FBoxMinAndMax& A, const FBoxMinAndMax& B);
 
@@ -138,6 +157,8 @@ public:
 	FBoxMinAndMax& operator-=(const FIntVector& X);
 	FBoxMinAndMax operator+(const FIntVector& X) const;
 	FBoxMinAndMax operator-(const FIntVector& X) const;
+	bool operator==(const FBoxMinAndMax& Other) const;
+	bool operator!=(const FBoxMinAndMax& Other) const;
 };
 
 FBoxMinAndMax PROCEDURALDUNGEON_API Rotate(const FBoxMinAndMax& Box, const EDoorDirection& Rot);

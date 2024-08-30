@@ -42,6 +42,8 @@ enum class EDungeonGraphState : uint8
 	NbState
 };
 
+// Holds the generated dungeon.
+// You can access the rooms using many functions.
 UCLASS(BlueprintType)
 class PROCEDURALDUNGEON_API UDungeonGraph : public UReplicableObject
 {
@@ -147,15 +149,18 @@ protected:
 	void GetRoomsByPredicate(TArray<URoom*>& OutRooms, TFunction<bool(const URoom*)> Predicate) const;
 	const URoom* FindFirstRoomByPredicate(TFunction<bool(const URoom*)> Predicate) const;
 
-	// UReplicableObject interface
+	//~ Begin UReplicableObject Interface
 	virtual bool ReplicateSubobjects(UActorChannel* Channel, FOutBunch* Bunch, FReplicationFlags* RepFlags) override;
+	virtual void RegisterReplicableSubobjects(bool bRegister) override;
+	//~ End UReplicableObject Interface
 
 	// Sync Rooms and ReplicatedRooms arrays
 	void SynchronizeRooms();
 
-	bool AreRoomsLoaded() const;
-	bool AreRoomsUnloaded() const;
-	bool AreRoomsInitialized() const;
+	bool AreRoomsLoaded(int32& NbRoomLoaded) const;
+	bool AreRoomsUnloaded(int32& NbRoomUnloaded) const;
+	bool AreRoomsInitialized(int32& NbRoomInitialized) const;
+	bool AreRoomsReady() const;
 
 	void RequestGeneration();
 	void RequestUnload();

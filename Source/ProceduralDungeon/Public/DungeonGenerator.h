@@ -32,7 +32,8 @@
 #include "DungeonGenerator.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGenerationEvent);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FRoomEvent, const URoomData*, NewRoom);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FRoomEvent, const URoomData*, Room);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FRoomDoorEvent, const URoomData*, Room, const FDoorDef&, Door);
 
 class ADoor;
 class URoom;
@@ -47,22 +48,86 @@ enum class EGenerationResult : uint8
 	Success
 };
 
+// Holds the settings for the dungeon limits.
+// These values are expressed in Room cells, and are based on the origin of the first room (0,0,0).
+// For example, if the first room is only 1 room cell (`FirstPoint = (0,0,0)`, `SecondPoint = (1,1,1)`), then  this is the cell (0,0,0).
+// If you set a `MinY=2` et `MaxY=2`, then on the Y axis the dungeon can go from the cell -2 to cell 2,
+// Making an effective range of 5 cells, centered on the first room.
+USTRUCT(BlueprintType, meta = (ShortToolTip = "Holds the settings for the dungeon limits."))
+struct FBoundsParams
+{
+	GENERATED_BODY()
+
+public:
+	// Enables the X limit in positive axis (north from the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (InlineEditConditionToggle))
+	bool bLimitMaxX {false};
+
+	// The X positive limit (north) of the dungeon in room units (starting from the origin of the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (EditCondition = "bLimitMaxX", UIMin = 0, ClampMin = 0))
+	int32 MaxX {0};
+
+	// Enables the X limit in negative axis (south from the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (InlineEditConditionToggle))
+	bool bLimitMinX {false};
+
+	// The X negative limit (south) of the dungeon in room units (starting from the origin of the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (EditCondition = "bLimitMinX", UIMin = 0, ClampMin = 0))
+	int32 MinX {0};
+
+	// Enables the Y limit in positive axis (east from the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (InlineEditConditionToggle))
+	bool bLimitMaxY {false};
+
+	// The Y positive limit (east) of the dungeon in room units (starting from the origin of the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (EditCondition = "bLimitMaxY", UIMin = 0, ClampMin = 0))
+	int32 MaxY {0};
+
+	// Enables the Y limit in negative axis (west from the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (InlineEditConditionToggle))
+	bool bLimitMinY {false};
+
+	// The Y negative limit (west) of the dungeon in room units (starting from the origin of the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (EditCondition = "bLimitMinY", UIMin = 0, ClampMin = 0))
+	int32 MinY {0};
+
+	// Enables the Z limit in positive axis (up from the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (InlineEditConditionToggle))
+	bool bLimitMaxZ {false};
+
+	// The Z positive limit (up) of the dungeon in room units (starting from the origin of the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (EditCondition = "bLimitMaxZ", UIMin = 0, ClampMin = 0))
+	int32 MaxZ {0};
+
+	// Enables the Z limit in negative axis (down from the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (InlineEditConditionToggle))
+	bool bLimitMinZ {false};
+
+	// The Z negative limit (down) of the dungeon in room units (starting from the origin of the first room).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation|Boundq Limits", meta = (EditCondition = "bLimitMinZ", UIMin = 0, ClampMin = 0))
+	int32 MinZ {0};
+
+public:
+	FBoxMinAndMax GetBox() const;
+};
+
+// This is the main actor of the plugin. The dungeon generator is responsible to generate dungeons and replicate them over the network. 
 UCLASS(Blueprintable, ClassGroup = "Procedural Dungeon")
 class PROCEDURALDUNGEON_API ADungeonGenerator : public AActor
 {
 	GENERATED_BODY()
 
 public:
-	// Sets default values for this actor's properties
 	ADungeonGenerator();
 
 protected:
-	// Called when the game starts or when spawned
+	//~ Begin AActor Interface
 	virtual void BeginPlay() override;
+	virtual void PostInitializeComponents() override;
 	virtual void EndPlay(EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
-
 	virtual bool ReplicateSubobjects(UActorChannel* Channel, FOutBunch* Bunch, FReplicationFlags* RepFlags) override;
+	//~ End AActor Interface
 
 public:
 
@@ -138,6 +203,10 @@ public:
 	UFUNCTION(BlueprintNativeEvent, Category = "Dungeon Generator", meta = (DisplayName = "On Room Added"))
 	void OnRoomAdded(const URoomData* NewRoom);
 
+	// Called each time no room could have been placed at a door (all room placement tries have been exhausted).
+	UFUNCTION(BlueprintNativeEvent, Category = "Dungeon Generator", meta = (DisplayName = "Failed To Add Room"))
+	void OnFailedToAddRoom(const URoomData* FromRoom, const FDoorDef& FromDoor);
+
 	// ===== Utility functions you can use in blueprint =====
 
 	// Return true if a specific RoomData is already in the dungeon
@@ -176,16 +245,32 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Dungeon Generator")
 	URoomData* GetRandomRoomData(TArray<URoomData*> RoomDataArray);
 
+	// Return a random RoomData from the weighted map provided.
+	// For example: you have RoomA with weight 1 and RoomB with weight 2,
+	// then RoomA has proba of 1/3 and RoomB 2/3 to be returned.
+	UFUNCTION(BlueprintCallable, Category = "Dungeon Generator")
+	URoomData* GetRandomRoomDataWeighted(const TMap<URoomData*, int>& RoomDataWeightedMap);
+
 	// Returns the current number of room in the generated dungeon.
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Dungeon Generator", meta = (DisplayName = "Room Count", CompactNodeTitle = "Room Count", DeprecatedFunction, DeprecationMessage = "Use the same function from the Rooms variable."))
+	UFUNCTION(BlueprintPure, Category = "Dungeon Generator", meta = (DisplayName = "Room Count", CompactNodeTitle = "Room Count", DeprecatedFunction, DeprecationMessage = "Use the same function from the Rooms variable."))
 	int GetNbRoom();
 
 	// Returns an array of room data with compatible at least one compatible door with the door data provided.
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Dungeon Generator")
+	// @param bSuccess True if at least one compatible room data was found.
+	// @param CompatibleRooms Filled with all compatible room data found.
+	// @param RoomDataArray The list of room data to check for compatibility.
+	// @param DoorData The door used to check if a room is compatible.
+	UFUNCTION(BlueprintPure, Category = "Dungeon Generator")
 	void GetCompatibleRoomData(bool& bSuccess, TArray<URoomData*>& CompatibleRooms, const TArray<URoomData*>& RoomDataArray, const FDoorDef& DoorData);
 
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Dungeon Generator")
+	// Access to the random stream of the procedural dungeon. You should always use this for the procedural generation.
+	// @return The random stream used by the dungeon generator.
+	UFUNCTION(BlueprintPure, Category = "Dungeon Generator")
 	const FRandomStream& GetRandomStream() { return Random; }
+
+	// Returns the current generation progress.
+	UFUNCTION(BlueprintPure, Category = "Dungeon Generator")
+	float GetProgress() const;
 
 	URoom* GetRoomByIndex(int64 Index) const;
 
@@ -212,6 +297,10 @@ public:
 	// Those rooms can be destroyed without loading them if the generation try is not valid.
 	UPROPERTY(BlueprintAssignable, Category = "Dungeon Generator")
 	FRoomEvent OnRoomAddedEvent;
+
+	// Called each time no room could have been placed at a door (all room placement tries have been exhausted).
+	UPROPERTY(BlueprintAssignable, Category = "Dungeon Generator")
+	FRoomDoorEvent OnFailedToAddRoomEvent;
 
 private:
 	// Create virtually the dungeon (no load nor initialization of room levels)
@@ -280,6 +369,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation")
 	bool bCanLoop {true};
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation")
+	FBoundsParams DungeonLimits;
+
 	// If ticked, when trying to place a new room during a dungeon generation,
 	// a box overlap test will be made to make sure the room will not spawn
 	// inside existing meshes in the persistent world.
@@ -301,8 +393,11 @@ public:
 	FVector GetDungeonOffset() const;
 	FQuat GetDungeonRotation() const;
 
+	FORCEINLINE const UDungeonGraph* GetRooms() const { return Graph; }
+	FORCEINLINE EGenerationState GetCurrentState() const { return CurrentState; }
+
 protected:
-	UPROPERTY(BlueprintReadOnly, Replicated, Category = "Dungeon Generator", meta = (DisplayName = "Rooms"))
+	UPROPERTY(BlueprintReadOnly, Category = "Dungeon Generator", meta = (DisplayName = "Rooms"))
 	UDungeonGraph* Graph;
 
 private:
@@ -310,8 +405,6 @@ private:
 	uint32 Seed;
 
 	static uint32 GeneratorCount;
-	static const uint32 MaxTry {500};
-	static const uint32 MaxRoomTry {10};
 
 	FRandomStream Random;
 
@@ -336,4 +429,7 @@ private:
 
 	// Transient. Only used to detect when occlusion distance is changed.
 	uint32 PreviousOcclusionDistance {0};
+
+	// Transient. Used to count unloaded/loaded/initialized rooms during generation.
+	int32 CachedTmpRoomCount {0};
 };

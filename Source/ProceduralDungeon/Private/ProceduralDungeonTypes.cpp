@@ -1,7 +1,7 @@
 /*
  * MIT License
  *
- * Copyright (c) 2019-2023 Benoit Pelletier
+ * Copyright (c) 2019-2024 Benoit Pelletier
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -170,6 +170,32 @@ FIntVector Rotate(const FIntVector& Pos, const EDoorDirection& Rot)
 	return NewPos;
 }
 
+FVector Rotate(const FVector& Pos, const EDoorDirection& Rot)
+{
+	FVector NewPos = Pos;
+	switch (Rot)
+	{
+	case EDoorDirection::North:
+		NewPos = Pos;
+		break;
+	case EDoorDirection::West:
+		NewPos.Y = -Pos.X;
+		NewPos.X = Pos.Y;
+		break;
+	case EDoorDirection::East:
+		NewPos.Y = Pos.X;
+		NewPos.X = -Pos.Y;
+		break;
+	case EDoorDirection::South:
+		NewPos.Y = -Pos.Y;
+		NewPos.X = -Pos.X;
+		break;
+	default:
+		checkNoEntry();
+	}
+	return NewPos;
+}
+
 // ############ FDoorDef ##############
 
 bool FDoorDef::operator==(const FDoorDef& Other) const
@@ -199,25 +225,45 @@ FString FDoorDef::ToString() const
 	return FString::Printf(TEXT("(%d,%d,%d) [%s]"), Position.X, Position.Y, Position.Z, *DirectionName.ToString());
 }
 
-FVector FDoorDef::GetRealDoorPosition(FIntVector DoorCell, EDoorDirection DoorRot, bool includeOffset)
+FDoorDef FDoorDef::GetOpposite() const
+{
+	FDoorDef OppositeDoor;
+	OppositeDoor.Position = Position + ToIntVector(Direction);
+	OppositeDoor.Direction = ~Direction;
+	return OppositeDoor;
+}
+
+FBoxCenterAndExtent FDoorDef::GetBounds(bool bIncludeOffset) const
+{
+	const FVector RotatedDoorSize = Rotate(GetDoorSize(), (!Direction) ? EDoorDirection::North : Direction).GetAbs();
+	const FVector WorldPosition = GetRealDoorPosition(Position, Direction, bIncludeOffset) + FVector(0, 0, RotatedDoorSize.Z * 0.5f);
+	return FBoxCenterAndExtent(WorldPosition, 0.5f * RotatedDoorSize);
+}
+
+FVector FDoorDef::GetRealDoorPosition(FIntVector DoorCell, EDoorDirection DoorRot, bool bIncludeOffset)
 {
 	const FVector CellPosition = FVector(DoorCell);
 	const FVector DirectionOffset = !DoorRot ? FVector::ZeroVector : (0.5f * ToVector(DoorRot));
-	const FVector HeightOffset = includeOffset ? FVector(0, 0, Dungeon::DoorOffset()) : FVector::ZeroVector;
+	const FVector HeightOffset = bIncludeOffset ? FVector(0, 0, Dungeon::DoorOffset()) : FVector::ZeroVector;
 	return Dungeon::RoomUnit() * (CellPosition + DirectionOffset + HeightOffset);
 }
 
 #if !UE_BUILD_SHIPPING
-void FDoorDef::DrawDebug(const UWorld* World, const FColor& Color, const FDoorDef& DoorDef, const FTransform& Transform, bool includeOffset, bool isConnected)
+void FDoorDef::DrawDebug(const UWorld* World, const FColor& Color, const FDoorDef& DoorDef, const FTransform& Transform, bool bIncludeOffset, bool isConnected)
 {
-	DrawDebug(World, Color, DoorDef.GetDoorSize(), DoorDef.Position, DoorDef.Direction, Transform, includeOffset, isConnected);
+	DrawDebug(World, Color, DoorDef.GetDoorSize(), DoorDef.Position, DoorDef.Direction, Transform, bIncludeOffset, isConnected);
+
+	// Door debug draw using its bounds
+	//FBoxCenterAndExtent DoorBounds = DoorDef.GetBounds(bIncludeOffset);
+	//DrawDebugBox(World, Transform.TransformPosition(DoorBounds.Center), DoorBounds.Extent, Transform.GetRotation(), FColor::Cyan);
 }
 
-void FDoorDef::DrawDebug(const UWorld* World, const FColor& Color, const FVector& DoorSize, const FIntVector& DoorCell, const EDoorDirection& DoorRot, const FTransform& Transform, bool includeOffset, bool isConnected)
+void FDoorDef::DrawDebug(const UWorld* World, const FColor& Color, const FVector& DoorSize, const FIntVector& DoorCell, const EDoorDirection& DoorRot, const FTransform& Transform, bool bIncludeOffset, bool isConnected)
 {
 #if ENABLE_DRAW_DEBUG
+	// @TODO: Use FDoorDef::GetBounds here? (should mabye remove this overload and use exclusively the one with FDoorDef?)
 	FQuat DoorRotation = Transform.GetRotation() * ToQuaternion(!DoorRot ? EDoorDirection::North : DoorRot);
-	FVector DoorPosition = Transform.TransformPosition(GetRealDoorPosition(DoorCell, DoorRot, includeOffset) + FVector(0, 0, DoorSize.Z * 0.5f));
+	FVector DoorPosition = Transform.TransformPosition(GetRealDoorPosition(DoorCell, DoorRot, bIncludeOffset) + FVector(0, 0, DoorSize.Z * 0.5f));
 
 	// Door frame
 	DrawDebugBox(World, DoorPosition, DoorSize * 0.5f, DoorRotation, Color);
@@ -260,6 +306,49 @@ FBoxCenterAndExtent FBoxMinAndMax::ToCenterAndExtent() const
 	return FBoxCenterAndExtent(Center, Extent.GetAbs());
 }
 
+bool FBoxMinAndMax::IsInside(const FIntVector& Cell) const
+{
+	return (Cell.X >= Min.X) && (Cell.X < Max.X)
+		&& (Cell.Y >= Min.Y) && (Cell.Y < Max.Y)
+		&& (Cell.Z >= Min.Z) && (Cell.Z < Max.Z);
+}
+
+bool FBoxMinAndMax::IsInside(const FBoxMinAndMax& Other) const
+{
+	return (Other.Min.X >= Min.X) && (Other.Max.X <= Max.X)
+		&& (Other.Min.Y >= Min.Y) && (Other.Max.Y <= Max.Y)
+		&& (Other.Min.Z >= Min.Z) && (Other.Max.Z <= Max.Z);
+}
+
+void FBoxMinAndMax::Rotate(const EDoorDirection& Rot)
+{
+	FIntVector Compensation = FIntVector::ZeroValue;
+	switch (Rot)
+	{
+	case EDoorDirection::East:
+		Compensation.X = 1;
+		break;
+	case EDoorDirection::West:
+		Compensation.Y = 1;
+		break;
+	case EDoorDirection::South:
+		Compensation.X = 1;
+		Compensation.Y = 1;
+		break;
+	default:
+		break;
+	}
+	const FIntVector A = ::Rotate(Min, Rot) + Compensation;
+	const FIntVector B = ::Rotate(Max, Rot) + Compensation;
+	Min = IntVector::Min(A, B);
+	Max = IntVector::Max(A, B);
+}
+
+FString FBoxMinAndMax::ToString() const
+{
+	return FString::Printf(TEXT("[(%d, %d, %d), (%d, %d, %d)]"), Min.X, Min.Y, Min.Z, Max.X, Max.Y, Max.Z);
+}
+
 bool FBoxMinAndMax::Overlap(const FBoxMinAndMax& A, const FBoxMinAndMax& B)
 {
 	return (A.Max.X > B.Min.X && A.Min.X < B.Max.X)
@@ -295,23 +384,19 @@ FBoxMinAndMax FBoxMinAndMax::operator-(const FIntVector& X) const
 	return NewBox;
 }
 
+bool FBoxMinAndMax::operator==(const FBoxMinAndMax& Other) const
+{
+	return (Min == Other.Min) && (Max == Other.Max);
+}
+
+bool FBoxMinAndMax::operator!=(const FBoxMinAndMax& Other) const
+{
+	return !FBoxMinAndMax::operator==(Other);
+}
+
 FBoxMinAndMax Rotate(const FBoxMinAndMax& Box, const EDoorDirection& Rot)
 {
-	FIntVector Compensation = FIntVector::ZeroValue;
-	switch (Rot)
-	{
-	case EDoorDirection::East:
-		Compensation.X = 1;
-		break;
-	case EDoorDirection::West:
-		Compensation.Y = 1;
-		break;
-	case EDoorDirection::South:
-		Compensation.X = 1;
-		Compensation.Y = 1;
-		break;
-	default:
-		break;
-	}
-	return FBoxMinAndMax(Rotate(Box.Min, Rot) + Compensation, Rotate(Box.Max, Rot) + Compensation);
+	FBoxMinAndMax NewBox(Box);
+	NewBox.Rotate(Rot);
+	return NewBox;
 }
