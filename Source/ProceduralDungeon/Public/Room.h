@@ -1,26 +1,9 @@
-/*
- * MIT License
- *
- * Copyright (c) 2019-2025 Benoit Pelletier
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright Benoit Pelletier 2019 - 2025 All Rights Reserved.
+//
+// This software is available under different licenses depending on the source from which it was obtained:
+// - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
+// - The CeCILL-C license (https://cecill.info/licences/Licence_CeCILL-C_V1-en.html) applies when obtained from any other source.
+// Please refer to the accompanying LICENSE file for further details.
 
 #pragma once
 
@@ -33,6 +16,7 @@
 #include "UObject/SoftObjectPtr.h"
 #include "RoomData.h" // for TSoftObjectPtr to compile. @TODO: Would be great to find a way to not include it
 #include "ReadOnlyRoom.h"
+#include "VoxelBounds/VoxelBounds.h"
 #include "Room.generated.h"
 
 class ADungeonGeneratorBase;
@@ -72,7 +56,7 @@ public:
 
 	//~ Begin IReadOnlyRoom Interface
 	virtual const URoomData* GetRoomData() const override { return RoomData.Get(); }
-	virtual int64 GetRoomID() const override{ return Id; }
+	virtual int64 GetRoomID() const override { return Id; }
 	virtual FIntVector GetPosition() const { return Position; }
 	virtual EDoorDirection GetDirection() const { return Direction; }
 	virtual bool AreAllDoorsConnected() const override;
@@ -252,7 +236,11 @@ public:
 	bool IsDoorIndexValid(int32 DoorIndex) const;
 	int32 GetDoorIndexAt(FIntVector WorldPos, EDoorDirection WorldRot) const;
 	int32 GetOtherDoorIndex(int32 DoorIndex) const;
-	const FDoorDef& GetDoorDef(int32 DoorIndex) const;
+
+	UFUNCTION(BlueprintPure, Category = "Room")
+	FDoorDef GetDoorDef(int32 DoorIndex) const;
+
+	FDoorDef GetDoorDefAt(FIntVector WorldPos, EDoorDirection WorldRot) const;
 
 	FIntVector WorldToRoom(const FIntVector& WorldPos) const;
 	FIntVector RoomToWorld(const FIntVector& RoomPos) const;
@@ -262,6 +250,8 @@ public:
 	FBoxMinAndMax RoomToWorld(const FBoxMinAndMax& RoomBox) const;
 	FDoorDef WorldToRoom(const FDoorDef& WorldDoor) const;
 	FDoorDef RoomToWorld(const FDoorDef& RoomDoor) const;
+	FVoxelBounds WorldToRoom(const FVoxelBounds& WorldBounds) const;
+	FVoxelBounds RoomToWorld(const FVoxelBounds& RoomBounds) const;
 	void SetRotationFromDoor(int DoorIndex, EDoorDirection WorldRot);
 	void SetPositionFromDoor(int DoorIndex, FIntVector WorldPos);
 	void SetPositionAndRotationFromDoor(int DoorIndex, FIntVector WorldPos, EDoorDirection WorldRot);
@@ -271,6 +261,7 @@ public:
 	FBoxCenterAndExtent GetBounds() const;
 	FBoxCenterAndExtent GetLocalBounds() const;
 	FBoxMinAndMax GetIntBounds() const;
+	FVoxelBounds GetVoxelBounds() const;
 
 	// AABB Overlapping
 	static bool Overlap(const URoom& A, const URoom& B);

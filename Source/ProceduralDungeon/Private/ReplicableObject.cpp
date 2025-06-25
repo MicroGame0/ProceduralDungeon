@@ -1,26 +1,9 @@
-/*
- * MIT License
- *
- * Copyright (c) 2023-2024 Benoit Pelletier
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright Benoit Pelletier 2023 - 2025 All Rights Reserved.
+//
+// This software is available under different licenses depending on the source from which it was obtained:
+// - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
+// - The CeCILL-C license (https://cecill.info/licences/Licence_CeCILL-C_V1-en.html) applies when obtained from any other source.
+// Please refer to the accompanying LICENSE file for further details.
 
 #include "ReplicableObject.h"
 #include "Engine/ActorChannel.h"
@@ -34,7 +17,7 @@ namespace
 	{
 		return (bPredicate) ? Str : TEXT("");
 	}
-}
+} //namespace
 
 bool UReplicableObject::ReplicateSubobject(UActorChannel* Channel, FOutBunch* Bunch, FReplicationFlags* RepFlags)
 {
@@ -77,14 +60,14 @@ void UReplicableObject::RegisterAsReplicable(bool bRegister, FRegisterSubObjectP
 		case EUnregisterSubObjectType::Unregister:
 			Owner->RemoveReplicatedSubObject(this);
 			break;
-#if UE_VERSION_NEWER_THAN(5, 2, 0)
+	#if UE_VERSION_NEWER_THAN(5, 2, 0)
 		case EUnregisterSubObjectType::Destroy:
 			Owner->DestroyReplicatedSubObjectOnRemotePeers(this);
 			break;
 		case EUnregisterSubObjectType::TearOff:
 			Owner->TearOffReplicatedSubObjectOnRemotePeers(this);
 			break;
-#endif
+	#endif
 		default:
 			checkf(false, TEXT("Unimplemented case."));
 			break;
@@ -128,7 +111,6 @@ FString UReplicableObject::GetAuthorityName() const
 {
 	return HasAuthority() ? TEXT("Server") : TEXT("Client");
 }
-
 
 void UReplicableObject::WakeUpOwnerActor()
 {

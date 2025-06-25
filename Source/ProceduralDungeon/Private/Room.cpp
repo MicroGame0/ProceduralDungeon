@@ -1,26 +1,9 @@
-/*
- * MIT License
- *
- * Copyright (c) 2019-2025 Benoit Pelletier
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright Benoit Pelletier 2019 - 2025 All Rights Reserved.
+//
+// This software is available under different licenses depending on the source from which it was obtained:
+// - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
+// - The CeCILL-C license (https://cecill.info/licences/Licence_CeCILL-C_V1-en.html) applies when obtained from any other source.
+// Please refer to the accompanying LICENSE file for further details.
 
 #include "Room.h"
 #include "Door.h"
@@ -96,6 +79,8 @@ void URoom::Init(URoomData* Data, ADungeonGeneratorBase* Generator, int32 RoomId
 	{
 		DungeonLog_Error("No RoomData provided.");
 	}
+
+	CreateAllCustomData();
 }
 
 bool URoom::IsConnected(int32 DoorIndex) const
@@ -266,7 +251,7 @@ void URoom::UpdateVisibility() const
 	else if (IsValid(Instance))
 	{
 		// TODO: make the level be visible again, I don't know why it is not visible although
-		// the Visible and Loaded of StreamingLevel are correctly set to true 
+		// the Visible and Loaded of StreamingLevel are correctly set to true
 		// and the Loaded of Level instance inside it is also set to true...
 		// In the meantime, only the legacy version will remains.
 		//Instance->SetShouldBeVisible(bNewVisibility);
@@ -364,11 +349,15 @@ FIntVector URoom::GetDoorWorldPosition(int DoorIndex) const
 
 bool URoom::IsDoorIndexValid(int32 DoorIndex) const
 {
+	check(RoomData.IsValid());
 	return DoorIndex >= 0 && DoorIndex < RoomData->Doors.Num();
 }
 
 int URoom::GetDoorIndexAt(FIntVector WorldPos, EDoorDirection WorldRot) const
 {
+	if (EDoorDirection::NbDirection == WorldRot)
+		return -2;
+
 	FIntVector localPos = WorldToRoom(WorldPos);
 	EDoorDirection localRot = WorldToRoom(WorldRot);
 
@@ -387,30 +376,37 @@ int URoom::GetOtherDoorIndex(int32 DoorIndex) const
 	return URoomConnection::GetOtherDoorId(Connections[DoorIndex].Get(), this);
 }
 
-const FDoorDef& URoom::GetDoorDef(int32 DoorIndex) const
+FDoorDef URoom::GetDoorDef(int32 DoorIndex) const
 {
-	check(IsDoorIndexValid(DoorIndex));
-	return RoomData->Doors[DoorIndex];
+	check(RoomData.IsValid());
+	return RoomToWorld(RoomData->GetDoorDef(DoorIndex));
+}
+
+FDoorDef URoom::GetDoorDefAt(FIntVector WorldPos, EDoorDirection WorldRot) const
+{
+	check(RoomData.IsValid());
+	int32 DoorIndex = GetDoorIndexAt(WorldPos, WorldRot);
+	return (DoorIndex >= 0) ? GetDoorDef(DoorIndex) : FDoorDef::Invalid;
 }
 
 FIntVector URoom::WorldToRoom(const FIntVector& WorldPos) const
 {
-	return Rotate(WorldPos - Position, -Direction);
+	return InverseTransform(WorldPos, Position, Direction);
 }
 
 FIntVector URoom::RoomToWorld(const FIntVector& RoomPos) const
 {
-	return Rotate(RoomPos, Direction) + Position;
+	return Transform(RoomPos, Position, Direction);
 }
 
 EDoorDirection URoom::WorldToRoom(const EDoorDirection& WorldRot) const
 {
-	return WorldRot - Direction;
+	return InverseTransform(WorldRot, Direction);
 }
 
 EDoorDirection URoom::RoomToWorld(const EDoorDirection& RoomRot) const
 {
-	return RoomRot + Direction;
+	return Transform(RoomRot, Direction);
 }
 
 FBoxMinAndMax URoom::WorldToRoom(const FBoxMinAndMax& WorldBox) const
@@ -425,18 +421,22 @@ FBoxMinAndMax URoom::RoomToWorld(const FBoxMinAndMax& RoomBox) const
 
 FDoorDef URoom::WorldToRoom(const FDoorDef& WorldDoor) const
 {
-	FDoorDef RoomDoor = WorldDoor;
-	RoomDoor.Position = WorldToRoom(WorldDoor.Position);
-	RoomDoor.Direction = WorldToRoom(WorldDoor.Direction);
-	return RoomDoor;
+	return FDoorDef::InverseTransform(WorldDoor, Position, Direction);
 }
 
 FDoorDef URoom::RoomToWorld(const FDoorDef& RoomDoor) const
 {
-	FDoorDef WorldDoor = RoomDoor;
-	WorldDoor.Position = RoomToWorld(RoomDoor.Position);
-	WorldDoor.Direction = RoomToWorld(RoomDoor.Direction);
-	return WorldDoor;
+	return FDoorDef::Transform(RoomDoor, Position, Direction);
+}
+
+FVoxelBounds URoom::WorldToRoom(const FVoxelBounds& WorldBounds) const
+{
+	return Rotate(WorldBounds - Position, -Direction);
+}
+
+FVoxelBounds URoom::RoomToWorld(const FVoxelBounds& RoomBounds) const
+{
+	return Rotate(RoomBounds, Direction) + Position;
 }
 
 void URoom::SetRotationFromDoor(int DoorIndex, EDoorDirection WorldRot)
@@ -483,6 +483,12 @@ FBoxMinAndMax URoom::GetIntBounds() const
 {
 	check(RoomData.IsValid());
 	return RoomToWorld(RoomData->GetIntBounds());
+}
+
+FVoxelBounds URoom::GetVoxelBounds() const
+{
+	check(RoomData.IsValid());
+	return RoomToWorld(RoomData->GetVoxelBounds());
 }
 
 FTransform URoom::GetTransform() const
@@ -551,7 +557,7 @@ bool URoom::GetCustomData(const TSubclassOf<URoomCustomData>& DataType, URoomCus
 		return false;
 
 	URoomCustomData* Datum = Pair->Data;
-	if(!IsValid(Datum))
+	if (!IsValid(Datum))
 		return false;
 
 	if (!Datum->IsA(DataType))
@@ -782,7 +788,7 @@ bool URoom::FixupReferences(UObject* Context)
 		Connections[i] = Connection;
 		DungeonLog_Debug("Fixed up connection: %s (id: %d)", *GetNameSafe(Connection), ConnectionIndex);
 	}
-	
+
 	return true;
 }
 
@@ -855,7 +861,7 @@ bool URoom::SerializeLevelActors(FSaveData& Data, bool bIsLoading)
 			TArray<uint8>& ActorData = Data.Actors.Add(ActorGuid);
 			SerializeUObject(ActorData, Actor, false);
 		}
-		else if(TArray<uint8>* ActorData = Data.Actors.Find(ActorGuid))
+		else if (TArray<uint8>* ActorData = Data.Actors.Find(ActorGuid))
 		{
 			SerializeUObject(*ActorData, Actor, true);
 		}

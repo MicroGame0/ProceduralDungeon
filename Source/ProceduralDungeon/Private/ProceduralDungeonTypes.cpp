@@ -1,26 +1,9 @@
-/*
- * MIT License
- *
- * Copyright (c) 2019-2025 Benoit Pelletier
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright Benoit Pelletier 2019 - 2025 All Rights Reserved.
+//
+// This software is available under different licenses depending on the source from which it was obtained:
+// - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
+// - The CeCILL-C license (https://cecill.info/licences/Licence_CeCILL-C_V1-en.html) applies when obtained from any other source.
+// Please refer to the accompanying LICENSE file for further details.
 
 #include "ProceduralDungeonTypes.h"
 #include "DrawDebugHelpers.h"
@@ -141,7 +124,13 @@ FVector ToVector(const EDoorDirection& Direction)
 FQuat ToQuaternion(const EDoorDirection& Direction)
 {
 	check(!!Direction);
-	return FRotator(0.0f, 90.0f * static_cast<uint8>(Direction), 0.0f).Quaternion();
+	return FRotator(0.0f, ToAngle(Direction), 0.0f).Quaternion();
+}
+
+float ToAngle(const EDoorDirection& Direction)
+{
+	check(!!Direction);
+	return 90.0f * static_cast<uint8>(Direction);
 }
 
 FIntVector Rotate(const FIntVector& Pos, const EDoorDirection& Rot)
@@ -196,7 +185,41 @@ FVector Rotate(const FVector& Pos, const EDoorDirection& Rot)
 	return NewPos;
 }
 
+FIntVector Transform(const FIntVector& Pos, const FIntVector& Translation, const EDoorDirection& Rotation)
+{
+	return Rotate(Pos, Rotation) + Translation;
+}
+
+FIntVector InverseTransform(const FIntVector& Pos, const FIntVector& Translation, const EDoorDirection& Rotation)
+{
+	return Rotate(Pos - Translation, -Rotation);
+}
+
+EDoorDirection Transform(const EDoorDirection& Direction, const EDoorDirection& Rotation)
+{
+	return Direction + Rotation;
+}
+
+EDoorDirection InverseTransform(const EDoorDirection& Direction, const EDoorDirection& Rotation)
+{
+	return Direction - Rotation;
+}
+
 // ############ FDoorDef ##############
+
+const FDoorDef FDoorDef::Invalid(FIntVector::ZeroValue, EDoorDirection::NbDirection);
+
+FDoorDef::FDoorDef(const FIntVector& InPosition, EDoorDirection InDirection, UDoorType* InType)
+{
+	Position = InPosition;
+	Direction = InDirection;
+	Type = InType;
+}
+
+bool FDoorDef::IsValid() const
+{
+	return Direction != EDoorDirection::NbDirection;
+}
 
 bool FDoorDef::operator==(const FDoorDef& Other) const
 {
@@ -225,7 +248,7 @@ FColor FDoorDef::GetDoorColor() const
 
 FString FDoorDef::GetTypeName() const
 {
-	return IsValid(Type) ? Type->GetName() : TEXT("Default");
+	return ::IsValid(Type) ? Type->GetName() : TEXT("Default");
 }
 
 FString FDoorDef::ToString() const
@@ -237,7 +260,7 @@ FString FDoorDef::ToString() const
 
 FDoorDef FDoorDef::GetOpposite() const
 {
-	FDoorDef OppositeDoor;
+	FDoorDef OppositeDoor(*this);
 	OppositeDoor.Position = Position + ToIntVector(Direction);
 	OppositeDoor.Direction = ~Direction;
 	return OppositeDoor;
@@ -263,6 +286,27 @@ FVector FDoorDef::GetRealDoorPosition(FIntVector DoorCell, EDoorDirection DoorRo
 	return Dungeon::RoomUnit() * (CellPosition + DirectionOffset + HeightOffset);
 }
 
+FQuat FDoorDef::GetRealDoorRotation(const FDoorDef& DoorDef, bool bFlipped)
+{
+	return FRotator(0, 90 * static_cast<uint8>(DoorDef.Direction) + bFlipped * 180, 0).Quaternion();
+}
+
+FDoorDef FDoorDef::Transform(const FDoorDef& DoorDef, FIntVector Translation, EDoorDirection Rotation)
+{
+	FDoorDef NewDoor = DoorDef;
+	NewDoor.Position = ::Transform(DoorDef.Position, Translation, Rotation);
+	NewDoor.Direction = ::Transform(DoorDef.Direction, Rotation);
+	return NewDoor;
+}
+
+FDoorDef FDoorDef::InverseTransform(const FDoorDef& DoorDef, FIntVector Translation, EDoorDirection Rotation)
+{
+	FDoorDef NewDoor = DoorDef;
+	NewDoor.Position = ::InverseTransform(DoorDef.Position, Translation, Rotation);
+	NewDoor.Direction = ::InverseTransform(DoorDef.Direction, Rotation);
+	return NewDoor;
+}
+
 #if !UE_BUILD_SHIPPING
 void FDoorDef::DrawDebug(const UWorld* World, const FDoorDef& DoorDef, const FTransform& Transform, bool bIncludeOffset, bool bIsConnected)
 {
@@ -275,7 +319,7 @@ void FDoorDef::DrawDebug(const UWorld* World, const FDoorDef& DoorDef, const FTr
 
 void FDoorDef::DrawDebug(const UWorld* World, const FColor& Color, const FVector& DoorSize, const FIntVector& DoorCell, const EDoorDirection& DoorRot, const FTransform& Transform, float DoorOffset, bool bIsConnected)
 {
-#if ENABLE_DRAW_DEBUG
+	#if ENABLE_DRAW_DEBUG
 	// @TODO: Use FDoorDef::GetBounds here? (should mabye remove this overload and use exclusively the one with FDoorDef?)
 	FQuat DoorRotation = Transform.GetRotation() * ToQuaternion(!DoorRot ? EDoorDirection::North : DoorRot);
 	FVector DoorPosition = Transform.TransformPosition(GetRealDoorPosition(DoorCell, DoorRot, DoorOffset) + FVector(0, 0, DoorSize.Z * 0.5f));
@@ -297,7 +341,7 @@ void FDoorDef::DrawDebug(const UWorld* World, const FColor& Color, const FVector
 		DrawDebugLine(World, DoorPosition - HalfSize, DoorPosition + HalfSize, Color);
 		DrawDebugLine(World, DoorPosition - HalfSizeConjugate, DoorPosition + HalfSizeConjugate, Color);
 	}
-#endif // ENABLE_DRAW_DEBUG
+	#endif // ENABLE_DRAW_DEBUG
 }
 #endif // !UE_BUILD_SHIPPING
 
@@ -361,13 +405,26 @@ void FBoxMinAndMax::Rotate(const EDoorDirection& Rot)
 
 void FBoxMinAndMax::Extend(const FBoxMinAndMax& Other)
 {
-	Min = IntVector::Min(Min, Other.Min);
-	Max = IntVector::Max(Max, Other.Max);
+	if (Min != Max)
+	{
+		Min = IntVector::Min(Min, Other.Min);
+		Max = IntVector::Max(Max, Other.Max);
+	}
+	else
+	{
+		Min = Other.Min;
+		Max = Other.Max;
+	}
 }
 
 FString FBoxMinAndMax::ToString() const
 {
 	return FString::Printf(TEXT("[(%d, %d, %d), (%d, %d, %d)]"), Min.X, Min.Y, Min.Z, Max.X, Max.Y, Max.Z);
+}
+
+FIntVector FBoxMinAndMax::GetClosestPoint(const FIntVector& Point) const
+{
+	return IntVector::Min(Max, IntVector::Max(Min, Point));
 }
 
 bool FBoxMinAndMax::Overlap(const FBoxMinAndMax& A, const FBoxMinAndMax& B)

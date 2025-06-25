@@ -1,26 +1,9 @@
-/*
- * MIT License
- *
- * Copyright (c) 2025 Benoit Pelletier
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright Benoit Pelletier 2025 All Rights Reserved.
+//
+// This software is available under different licenses depending on the source from which it was obtained:
+// - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
+// - The CeCILL-C license (https://cecill.info/licences/Licence_CeCILL-C_V1-en.html) applies when obtained from any other source.
+// Please refer to the accompanying LICENSE file for further details.
 
 #include "RoomConnection.h"
 #include "Room.h"
@@ -32,6 +15,7 @@
 #include "Engine/Engine.h"
 #include "Interfaces/RoomContainer.h"
 #include "Utils/DungeonSaveUtils.h"
+#include "DungeonGeneratorBase.h"
 
 void URoomConnection::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
@@ -48,7 +32,6 @@ void URoomConnection::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME_WITH_PARAMS(URoomConnection, RoomBDoorId, Params);
 	DOREPLIFETIME_WITH_PARAMS(URoomConnection, DoorInstance, Params);
 }
-
 
 bool URoomConnection::SerializeObject(FStructuredArchive::FRecord& Record, bool bIsLoading)
 {
@@ -139,6 +122,16 @@ const TWeakObjectPtr<URoom> URoomConnection::GetRoomB() const
 	return RoomB;
 }
 
+const URoom* URoomConnection::GetRoomA_BP() const
+{
+	return RoomA.Get();
+}
+
+const URoom* URoomConnection::GetRoomB_BP() const
+{
+	return RoomB.Get();
+}
+
 int32 URoomConnection::GetRoomADoorId() const
 {
 	return RoomADoorId;
@@ -169,6 +162,60 @@ bool URoomConnection::IsDoorInstanced() const
 ADoor* URoomConnection::GetDoorInstance() const
 {
 	return DoorInstance.Get();
+}
+
+FVector URoomConnection::GetDoorLocation(bool bIgnoreGeneratorTransform) const
+{
+	FDoorDef DoorDef;
+	const AActor* Generator = nullptr;
+	if (RoomA.IsValid())
+	{
+		DoorDef = RoomA->GetDoorDef(RoomADoorId);
+		Generator = RoomA->Generator();
+	}
+	else if (RoomB.IsValid())
+	{
+		DoorDef = RoomB->GetDoorDef(RoomBDoorId);
+		Generator = RoomB->Generator();
+	}
+	else
+	{
+		return FVector();
+	}
+
+	FVector Location = FDoorDef::GetRealDoorPosition(DoorDef);
+	if (!bIgnoreGeneratorTransform && IsValid(Generator))
+		Location = Generator->GetTransform().TransformPositionNoScale(Location);
+
+	return Location;
+}
+
+FRotator URoomConnection::GetDoorRotation(bool bIgnoreGeneratorTransform) const
+{
+	FDoorDef DoorDef;
+	const AActor* Generator = nullptr;
+	bool bFinalFlipped = bFlipped;
+	if (RoomA.IsValid())
+	{
+		DoorDef = RoomA->GetDoorDef(RoomADoorId);
+		Generator = RoomA->Generator();
+	}
+	else if (RoomB.IsValid())
+	{
+		DoorDef = RoomB->GetDoorDef(RoomBDoorId);
+		Generator = RoomB->Generator();
+		bFinalFlipped = !bFlipped;
+	}
+	else
+	{
+		return FRotator::ZeroRotator;
+	}
+
+	FQuat Rotation = FDoorDef::GetRealDoorRotation(DoorDef, bFinalFlipped);
+	if (!bIgnoreGeneratorTransform && IsValid(Generator))
+		Rotation = Generator->GetTransform().InverseTransformRotation(Rotation);
+
+	return Rotation.Rotator();
 }
 
 void URoomConnection::SetDoorClass(TSubclassOf<ADoor> InDoorClass, bool bInFlipped)
@@ -205,9 +252,9 @@ ADoor* URoomConnection::InstantiateDoor(UWorld* World, AActor* Owner, bool bUseO
 		bFinalFlipped = !bFinalFlipped; // Flipped is inverted when using RoomB instead of RoomA
 	}
 
-	FDoorDef DoorDef = Room->RoomToWorld(Room->GetDoorDef(DoorId));
+	FDoorDef DoorDef = Room->GetDoorDef(DoorId);
 	FVector InstanceDoorPos = FDoorDef::GetRealDoorPosition(DoorDef);
-	FQuat InstanceDoorRot = FRotator(0, 90 * static_cast<uint8>(DoorDef.Direction) + bFinalFlipped * 180, 0).Quaternion();
+	FQuat InstanceDoorRot = FDoorDef::GetRealDoorRotation(DoorDef, bFinalFlipped);
 
 	if (bUseOwnerTransform && IsValid(Owner))
 	{

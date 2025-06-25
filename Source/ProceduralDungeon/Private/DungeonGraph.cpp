@@ -1,26 +1,9 @@
-/*
- * MIT License
- *
- * Copyright (c) 2023-2025 Benoit Pelletier
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright Benoit Pelletier 2023 - 2025 All Rights Reserved.
+//
+// This software is available under different licenses depending on the source from which it was obtained:
+// - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
+// - The CeCILL-C license (https://cecill.info/licences/Licence_CeCILL-C_V1-en.html) applies when obtained from any other source.
+// Please refer to the accompanying LICENSE file for further details.
 
 #include "DungeonGraph.h"
 #include "Utils/ReplicationUtils.h"
@@ -129,13 +112,6 @@ void UDungeonGraph::InitRooms()
 		}
 	}
 
-	// Create custom data for all rooms
-	for (URoom* Room : Rooms)
-	{
-		// @TODO: Maybe could be done during the `Room->Init()` instead?
-		Room->CreateAllCustomData();
-	}
-
 	// Finally we can initialize them all
 	for (URoom* Room : Rooms)
 	{
@@ -241,28 +217,26 @@ void UDungeonGraph::GetAllRoomsWithCustomData(const TSubclassOf<URoomCustomData>
 
 void UDungeonGraph::GetAllRoomsWithAllCustomData(const TArray<TSubclassOf<URoomCustomData>>& CustomData, TArray<URoom*>& OutRooms)
 {
-	GetRoomsByPredicate(OutRooms, [&CustomData](const URoom* Room)
+	GetRoomsByPredicate(OutRooms, [&CustomData](const URoom* Room) {
+		for (auto Datum : CustomData)
 		{
-			for (auto Datum : CustomData)
-			{
-				if (!Room->HasCustomData(Datum))
-					return false;
-			}
-			return true;
-		});
+			if (!Room->HasCustomData(Datum))
+				return false;
+		}
+		return true;
+	});
 }
 
 void UDungeonGraph::GetAllRoomsWithAnyCustomData(const TArray<TSubclassOf<URoomCustomData>>& CustomData, TArray<URoom*>& OutRooms)
 {
-	GetRoomsByPredicate(OutRooms, [&CustomData](const URoom* Room)
+	GetRoomsByPredicate(OutRooms, [&CustomData](const URoom* Room) {
+		for (auto Datum : CustomData)
 		{
-			for (auto Datum : CustomData)
-			{
-				if (Room->HasCustomData(Datum))
-					return true;
-			}
-			return false;
-		});
+			if (Room->HasCustomData(Datum))
+				return true;
+		}
+		return false;
+	});
 }
 
 URoom* UDungeonGraph::GetRandomRoom(const TArray<URoom*>& RoomList) const
@@ -369,14 +343,70 @@ FVector UDungeonGraph::GetDungeonBoundsExtent() const
 	return GetDungeonBounds(Transform).Extent;
 }
 
+struct FRoomCandidatePredicate
+{
+	bool operator()(const FRoomCandidate& A, const FRoomCandidate& B) const
+	{
+		return A.Score > B.Score;
+	}
+};
+
+bool UDungeonGraph::FilterAndSortRooms(const TArray<URoomData*>& RoomList, const FDoorDef& FromDoor, TArray<FRoomCandidate>& SortedRooms, const FScoreCallback& CustomScore) const
+{
+	SortedRooms.Empty();
+
+	FDoorDef TargetDoor = FromDoor.GetOpposite();
+
+	for (URoomData* RoomData : RoomList)
+	{
+		if (!IsValid(RoomData))
+			continue;
+
+		FVoxelBounds DataBounds = RoomData->GetVoxelBounds();
+
+		// Try each possible door
+		for (int i = 0; i < RoomData->GetNbDoor(); ++i)
+		{
+			FDoorDef Door = RoomData->Doors[i];
+
+			// Filter out the door candidate if not compatible with the door
+			// we want to connect from.
+			if (!FDoorDef::AreCompatible(TargetDoor, Door))
+				continue;
+
+			// Create a new bounds placed at the target door
+			EDoorDirection Direction = TargetDoor.Direction - Door.Direction;
+			FVoxelBounds NewBounds = Rotate(DataBounds, Direction);
+			NewBounds += TargetDoor.Position - Rotate(Door.Position, Direction);
+
+			FRoomCandidate Candidate;
+			Candidate.Data = RoomData;
+			Candidate.DoorIndex = i;
+
+			// Check if the room can fit
+			if (!NewBounds.GetCompatibilityScore(Bounds, Candidate.Score, CustomScore))
+				continue;
+
+			SortedRooms.HeapPush(Candidate, FRoomCandidatePredicate());
+		}
+	}
+
+	return SortedRooms.Num() > 0;
+}
+
+bool UDungeonGraph::FilterAndSortRooms(const TArray<URoomData*>& RoomList, const FDoorDef& FromDoor, TArray<FRoomCandidate>& SortedRooms) const
+{
+	return FilterAndSortRooms(RoomList, FromDoor, SortedRooms, FScoreCallback());
+}
+
 FBoxCenterAndExtent UDungeonGraph::GetDungeonBounds(const FTransform& Transform) const
 {
-	return Dungeon::ToWorld(Bounds, Transform);
+	return Dungeon::ToWorld(Bounds.GetBounds(), Transform);
 }
 
 FBoxMinAndMax UDungeonGraph::GetIntBounds() const
 {
-	return Bounds;
+	return Bounds.GetBounds();
 }
 
 URoom* UDungeonGraph::GetRoomByIndex(int64 Index) const
@@ -413,7 +443,7 @@ int UDungeonGraph::CountRoomByPredicate(TFunction<bool(const URoom*)> Predicate)
 		if (Predicate(Room))
 			count++;
 	}
-	return  count;
+	return count;
 }
 
 void UDungeonGraph::GetRoomsByPredicate(TArray<URoom*>& OutRooms, TFunction<bool(const URoom*)> Predicate) const
@@ -580,7 +610,7 @@ void CopyRooms(TArray<URoom*>& To, TArray<URoom*>& From)
 {
 	for (URoom* Room : From)
 	{
-		if(Room->Instance)
+		if (Room->Instance)
 			DungeonLog_Debug("[%s] Loaded Level: %s", *GetNameSafe(Room), *GetNameSafe(Room->Instance->GetLoadedLevel()));
 	}
 
@@ -705,12 +735,12 @@ void UDungeonGraph::UnloadAllRooms()
 void UDungeonGraph::UpdateBounds(const URoom* Room)
 {
 	check(IsValid(Room));
-	Bounds.Extend(Room->GetIntBounds());
+	Bounds += Room->GetVoxelBounds();
 }
 
 void UDungeonGraph::RebuildBounds()
 {
-	Bounds = FBoxMinAndMax();
+	Bounds = FVoxelBounds();
 	for (const URoom* Room : Rooms)
 	{
 		UpdateBounds(Room);

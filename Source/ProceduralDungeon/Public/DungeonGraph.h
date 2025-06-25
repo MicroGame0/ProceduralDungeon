@@ -1,26 +1,9 @@
-/*
- * MIT License
- *
- * Copyright (c) 2023-2025 Benoit Pelletier
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright Benoit Pelletier 2023 - 2025 All Rights Reserved.
+//
+// This software is available under different licenses depending on the source from which it was obtained:
+// - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
+// - The CeCILL-C license (https://cecill.info/licences/Licence_CeCILL-C_V1-en.html) applies when obtained from any other source.
+// Please refer to the accompanying LICENSE file for further details.
 
 #pragma once
 
@@ -32,6 +15,7 @@
 #include "Templates/SubclassOf.h"
 #include "Templates/Function.h"
 #include "ProceduralDungeonTypes.h"
+#include "VoxelBounds/VoxelBounds.h"
 #include "DungeonGraph.generated.h"
 
 class URoom;
@@ -39,6 +23,24 @@ class URoomData;
 class URoomCustomData;
 class URoomConnection;
 class ADungeonGeneratorBase;
+
+// Describe a potential room to be added to the dungeon.
+// Mainly used by FilterAndSortRooms function.
+USTRUCT(BlueprintType)
+struct FRoomCandidate
+{
+	GENERATED_BODY();
+
+public:
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Room Candidate")
+	URoomData* Data {nullptr};
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Room Candidate")
+	int32 DoorIndex {-1};
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Room Candidate")
+	int32 Score {-1};
+};
 
 // Holds the generated dungeon.
 // You can access the rooms using many functions.
@@ -88,6 +90,10 @@ public:
 	// Returns all rooms
 	UFUNCTION(BlueprintPure, Category = "Dungeon Graph")
 	const TArray<URoom*>& GetAllRooms() const { return Rooms; }
+
+	// Returns all room connections
+	UFUNCTION(BlueprintPure, Category = "Dungeon Graph")
+	const TArray<URoomConnection*>& GetAllConnections() const { return RoomConnections; }
 
 	// Returns all room instances of the provided room data
 	UFUNCTION(BlueprintCallable, Category = "Dungeon Graph")
@@ -189,17 +195,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Dungeon Graph")
 	FVector GetDungeonBoundsExtent() const;
 
+	UFUNCTION(BlueprintPure = false, Category = "Dungeon Graph", meta = (ExpandBoolAsExecs = "ReturnValue", AdvancedDisplay = "CustomFilter", AutoCreateRefTerm = "CustomScore"))
+	bool FilterAndSortRooms(const TArray<URoomData*>& RoomList, const FDoorDef& FromDoor, TArray<FRoomCandidate>& SortedRooms, const FScoreCallback& CustomScore) const;
+	bool FilterAndSortRooms(const TArray<URoomData*>& RoomList, const FDoorDef& FromDoor, TArray<FRoomCandidate>& SortedRooms) const;
+
 	// Returns the computed dungeon bounds.
 	class FBoxCenterAndExtent GetDungeonBounds(const FTransform& Transform = FTransform::Identity) const;
 	struct FBoxMinAndMax GetIntBounds() const;
+	FVoxelBounds GetVoxelBounds() const { return Bounds; }
 
 	// Returns in OutRooms all the rooms in the Distance from each InRooms and optionally apply Func on each rooms.
 	// Distance is the number of room connection between 2 rooms, not the distance in any unit.
 	static void TraverseRooms(const TSet<URoom*>& InRooms, TSet<URoom*>* OutRooms, uint32 Distance, TFunction<void(URoom*)> Func);
 
 	static bool FindPath(const URoom* From, const URoom* To, TArray<const URoom*>* OutPath = nullptr, bool IgnoreLocked = false);
-
-	const TArray<URoomConnection*>& GetAllConnections() const { return RoomConnections; }
 
 protected:
 	int CountRoomByPredicate(TFunction<bool(const URoom*)> Predicate) const;
@@ -263,7 +272,7 @@ private:
 	TWeakObjectPtr<ADungeonGeneratorBase> Generator {nullptr};
 
 	// Transient. The computed bounds of the dungeon. Updated each time the room list changes.
-	FBoxMinAndMax Bounds;
+	FVoxelBounds Bounds;
 
 private:
 	struct FSaveData

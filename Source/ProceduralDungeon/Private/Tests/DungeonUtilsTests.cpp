@@ -1,26 +1,9 @@
-/*
- * MIT License
- *
- * Copyright (c) 2024-2025 Benoit Pelletier
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright Benoit Pelletier 2024 - 2025 All Rights Reserved.
+//
+// This software is available under different licenses depending on the source from which it was obtained:
+// - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
+// - The CeCILL-C license (https://cecill.info/licences/Licence_CeCILL-C_V1-en.html) applies when obtained from any other source.
+// Please refer to the accompanying LICENSE file for further details.
 
 #include "CoreTypes.h"
 #include "Containers/UnrealString.h"
@@ -37,11 +20,11 @@ bool FDungeonUtilsTest_WeightedMap::RunTest(const FString& Parameters)
 	// Built-in types test
 	{
 		TMap<int, int> WeightedMap = {
-			{ 1, 0 },	// Weight with 0 should never be returned
-			{ 2, 1 },	// The first non-zero weight should be return for index 0
-			{ 3, 2 },	// Weights greater than 1 should be returned for as much indices
-			{ 4, 1 }	// The last one should be return when index == total weights minus one
-		};				// Out of bounds index should return default value
+			{1, 0}, // Weight with 0 should never be returned
+			{2, 1}, // The first non-zero weight should be return for index 0
+			{3, 2}, // Weights greater than 1 should be returned for as much indices
+			{4, 1}	// The last one should be return when index == total weights minus one
+		}; // Out of bounds index should return default value
 
 		TestEqual(TEXT("Total Weights"), Dungeon::GetTotalWeight(WeightedMap), 4);
 		TestEqual(TEXT("Weighted value at -1"), Dungeon::GetWeightedAt(WeightedMap, -1), 0); // negative index should return default value
@@ -60,10 +43,10 @@ bool FDungeonUtilsTest_WeightedMap::RunTest(const FString& Parameters)
 		int d = 4;
 
 		TMap<int*, int> WeightedMap = {
-			{ &a, 2 },
-			{ &b, 0 },	// Weight with 0 in middle should be skipped
-			{ &c, 1 },
-			{ &d, 0 }	// The last one should not be returned if weight is 0
+			{&a, 2},
+			{&b, 0}, // Weight with 0 in middle should be skipped
+			{&c, 1},
+			{&d, 0} // The last one should not be returned if weight is 0
 		};
 
 		TestEqual(TEXT("Total Weights"), Dungeon::GetTotalWeight(WeightedMap), 3);
@@ -156,8 +139,8 @@ void FGuid2SeedStatisticalTests::Define()
 		for (const auto& Guid : GuidsToTest)
 		{
 			Params.Guid = Guid;
-			Describe(FString::Printf(TEXT("with Guid %s"), *Guid.ToString()), [this, Params]() mutable {
-
+			Describe(FString::Printf(TEXT("with Guid %s"), *Guid.ToString()), [this, Params]() mutable
+			{
 				// The test cases we want to check for each Guid.
 				// First value is the number of elements in the generated samples.
 				// Second value is the critical value for the Chi Squared test (with p-value of 5%)

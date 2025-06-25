@@ -1,26 +1,9 @@
-/*
- * MIT License
- *
- * Copyright (c) 2019-2025 Benoit Pelletier
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright Benoit Pelletier 2019 - 2025 All Rights Reserved.
+//
+// This software is available under different licenses depending on the source from which it was obtained:
+// - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
+// - The CeCILL-C license (https://cecill.info/licences/Licence_CeCILL-C_V1-en.html) applies when obtained from any other source.
+// Please refer to the accompanying LICENSE file for further details.
 
 #pragma once
 
@@ -80,7 +63,7 @@ public:
 
 // This is the main actor of the plugin. The dungeon generator is responsible to generate dungeons and replicate them over the network.
 // This base class is abstract. You need to override the `CreateDungeon` function to write your own generation algorithm.
-UCLASS(Abstract, NotBlueprintable, BlueprintType, ClassGroup = "Procedural Dungeon")
+UCLASS(Abstract, Blueprintable, BlueprintType, ClassGroup = "Procedural Dungeon")
 class PROCEDURALDUNGEON_API ADungeonGeneratorBase : public AActor
 {
 	GENERATED_BODY()
@@ -100,7 +83,6 @@ protected:
 	void SerializeObject(FStructuredArchive::FRecord& Record, bool bIsLoading);
 
 public:
-
 	// Update the seed and call the generation on all clients
 	// Do nothing when called on clients
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Dungeon Generator")
@@ -159,6 +141,10 @@ public:
 	// Called before trying to generate a new dungeon and each time IsValidDungeon return false.
 	UFUNCTION(BlueprintNativeEvent, Category = "Dungeon Generator", meta = (DisplayName = "Generation Init"))
 	void OnGenerationInit();
+
+	// Called when a dungeon has been successfully generated (IsValidDungeon returned true).
+	UFUNCTION(BlueprintNativeEvent, Category = "Dungeon Generator", meta = (DisplayName = "Generation Success"))
+	void OnGenerationSuccess();
 
 	// Called when all dungeon generation tries are exhausted (IsValidDungeon always return false).
 	// No dungeon had been generated.
@@ -228,6 +214,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Dungeon Generator")
 	FGenerationEvent OnGenerationInitEvent;
 
+	// Called when a dungeon has been successfully generated (IsValidDungeon returned true).
+	UPROPERTY(BlueprintAssignable, Category = "Dungeon Generator")
+	FGenerationEvent OnGenerationSuccessEvent;
+
 	// Called when all dungeon generation tries are exhausted (IsValidDungeon always return false).
 	// No dungeon had been generated.
 	UPROPERTY(BlueprintAssignable, Category = "Dungeon Generator")
@@ -244,32 +234,29 @@ public:
 
 protected:
 	// Create virtually the dungeon (no load nor initialization of room levels)
-	UFUNCTION(BlueprintNativeEvent, Category = "Dungeon Generator", meta = (BlueprintInternalUseOnly = true))
+	UFUNCTION(BlueprintNativeEvent, Category = "GenerationAlgorithm")
 	bool CreateDungeon();
 
 	// ===== Functions for dungeon creation =====
-	// @TODO: For now, I didn't found a way to hide them on child blueprints (HideFunctions and KismetHideOverrides do not work)
-	// So in the meantime I marked them as BlueprintInternalUseOnly.
-	// Can still be used in C++.
 
 	// Clear current graph and call GenerationInit event.
-	UFUNCTION(BlueprintCallable, Category = "Dungeon Generator", meta = (BlueprintInternalUseOnly = true))
+	UFUNCTION(BlueprintCallable, Category = "GenerationAlgorithm", meta = (BlueprintProtected))
 	void StartNewDungeon();
 
 	// Initialize room instances after all rooms have been placed and connected (call InitializeDungeon).
-	UFUNCTION(BlueprintCallable, Category = "Dungeon Generator", meta = (BlueprintInternalUseOnly = true))
+	UFUNCTION(BlueprintCallable, Category = "GenerationAlgorithm", meta = (BlueprintProtected))
 	void FinalizeDungeon();
 
 	// Create and initialize a new room instance using the room data provided.
-	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "Dungeon Generator", meta = (BlueprintInternalUseOnly = true))
+	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "GenerationAlgorithm", meta = (BlueprintProtected))
 	URoom* CreateRoomInstance(URoomData* RoomData);
 
 	// Set the position and rotation of a room instance and return true if there is nothing colliding with it.
-	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "Dungeon Generator", meta = (ReturnDisplayName = "Success", HidePin = "World", BlueprintInternalUseOnly = true))
+	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "GenerationAlgorithm", meta = (BlueprintProtected, ReturnDisplayName = "Success", HidePin = "World"))
 	bool TryPlaceRoom(URoom* const& Room, int DoorIndex, const FDoorDef& TargetDoor, const UWorld* World = nullptr) const;
 
 	// Finalize the room creation by adding it to the dungeon graph. OnRoomAdded is called here.
-	UFUNCTION(BlueprintCallable, Category = "Dungeon Generator", meta = (ReturnDisplayName = "Success", AutoCreateRefTerm = "DoorsToConnect", AdvancedDisplay = "DoorsToConnect,bFailIfNotConnected", BlueprintInternalUseOnly = true))
+	UFUNCTION(BlueprintCallable, Category = "GenerationAlgorithm", meta = (BlueprintProtected, ReturnDisplayName = "Success", AutoCreateRefTerm = "DoorsToConnect", AdvancedDisplay = "DoorsToConnect,bFailIfNotConnected"))
 	bool AddRoomToDungeon(URoom* const& Room, const TArray<int>& DoorsToConnect, bool bFailIfNotConnected = true);
 	bool AddRoomToDungeon(URoom* const& Room);
 

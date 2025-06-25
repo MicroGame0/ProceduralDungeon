@@ -1,32 +1,15 @@
-/*
- * MIT License
- *
- * Copyright (c) 2023-2025 Benoit Pelletier
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
+// Copyright Benoit Pelletier 2023 - 2025 All Rights Reserved.
+//
+// This software is available under different licenses depending on the source from which it was obtained:
+// - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
+// - The CeCILL-C license (https://cecill.info/licences/Licence_CeCILL-C_V1-en.html) applies when obtained from any other source.
+// Please refer to the accompanying LICENSE file for further details.
 
 #include "ProceduralDungeonUtils.h"
 #include "ProceduralDungeonSettings.h"
 #include "Room.h"
 #include "ProceduralDungeonLog.h"
-#include "Math/GenericOctree.h" // FBoxCenterAndExtent
+#include "Math/GenericOctree.h"		// FBoxCenterAndExtent
 #include "ProceduralDungeonTypes.h" // FBoxMinAndMax
 
 FIntVector IntVector::Min(const FIntVector& A, const FIntVector& B)
@@ -237,10 +220,10 @@ uint32 Random::Guid2Seed(FGuid Guid, int64 Salt)
 	uint64 State = Part1 ^ Part2 ^ Salt;
 
 	// Applying PCG-RXS-M-XS to create much more variations from the salt.
-	const uint8 Count = State >> 59;	// Extracting the highest 5 bits for the random xorshift below (64-5=59)
-	State ^= State >> (5 + Count);		// [RXS] Random xorshift (at least 5 to leave the highest 5 bits untouched)
-	State *= 12605985483714917081u;		// [M] Multiplication with a really big odd number
-	State ^= State >> 43;				// [XS] Xorshifting 1/3 of the top bits to the 1/3 of the lower bits
+	const uint8 Count = State >> 59;				   // Extracting the highest 5 bits for the random xorshift below (64-5=59)
+	State ^= State >> (5 + Count);					   // [RXS] Random xorshift (at least 5 to leave the highest 5 bits untouched)
+	State *= 12605985483714917081u;					   // [M] Multiplication with a really big odd number
+	State ^= State >> 43;							   // [XS] Xorshifting 1/3 of the top bits to the 1/3 of the lower bits
 	return static_cast<uint32>(State ^ (State >> 32)); // Folding the top half for the result on the bottom half to convert into a 32bit output.
 }
 
@@ -252,7 +235,7 @@ void ObjectUtils::DispatchToObjectAndSubobjects(UObject* Obj, TFunction<void(UOb
 
 	// Get all direct subobjects of this object.
 	TArray<UObject*> Subobjects;
-	GetObjectsWithOuter(Obj, Subobjects, /*bIncludeNestedObjects = */false);
+	GetObjectsWithOuter(Obj, Subobjects, /*bIncludeNestedObjects = */ false);
 
 	++Depth;
 	// Recursively dispatch to all subobjects found.
