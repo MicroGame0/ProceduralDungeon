@@ -1,4 +1,4 @@
-// Copyright Benoit Pelletier 2023 - 2025 All Rights Reserved.
+// Copyright Benoit Pelletier 2023 - 2026 All Rights Reserved.
 //
 // This software is available under different licenses depending on the source from which it was obtained:
 // - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
@@ -16,6 +16,7 @@
 #include "Templates/Function.h"
 #include "ProceduralDungeonTypes.h"
 #include "VoxelBounds/VoxelBounds.h"
+#include "DungeonOctree.h"
 #include "DungeonGraph.generated.h"
 
 class URoom;
@@ -23,24 +24,6 @@ class URoomData;
 class URoomCustomData;
 class URoomConnection;
 class ADungeonGeneratorBase;
-
-// Describe a potential room to be added to the dungeon.
-// Mainly used by FilterAndSortRooms function.
-USTRUCT(BlueprintType)
-struct FRoomCandidate
-{
-	GENERATED_BODY();
-
-public:
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Room Candidate")
-	URoomData* Data {nullptr};
-
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Room Candidate")
-	int32 DoorIndex {-1};
-
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Room Candidate")
-	int32 Score {-1};
-};
 
 // Holds the generated dungeon.
 // You can access the rooms using many functions.
@@ -56,6 +39,8 @@ class PROCEDURALDUNGEON_API UDungeonGraph : public UReplicableObject, public IRo
 #endif
 
 public:
+	UDungeonGraph();
+
 	//~ Begin IRoomContainer Interface
 	// Returns the room instance with the provided index.
 	// Returns null if no room exists with the provided index.
@@ -81,8 +66,11 @@ public:
 	void InitRooms();
 	void Clear();
 
+	bool CanRoomFit(const URoom* Room) const;
 	bool TryConnectDoor(URoom* Room, int32 DoorIndex);
 	bool TryConnectToExistingDoors(URoom* Room);
+
+	TArray<URoom*> GetAllRoomsOverlapping(const FBox& Box) const;
 
 	bool HasRooms() const { return Rooms.Num() > 0; }
 	bool IsDirty() const { return bIsDirty; }
@@ -206,7 +194,7 @@ public:
 
 	// Returns in OutRooms all the rooms in the Distance from each InRooms and optionally apply Func on each rooms.
 	// Distance is the number of room connection between 2 rooms, not the distance in any unit.
-	static void TraverseRooms(const TSet<URoom*>& InRooms, TSet<URoom*>* OutRooms, uint32 Distance, TFunction<void(URoom*)> Func);
+	static void TraverseRooms(const TSet<URoom*>& InRooms, TSet<URoom*>* OutRooms, uint32 Distance, TFunction<void(URoom*, uint32)> Func);
 
 	static bool FindPath(const URoom* From, const URoom* To, TArray<const URoom*>* OutPath = nullptr, bool IgnoreLocked = false);
 
@@ -247,6 +235,9 @@ protected:
 	// Recreate the bounds using the whole room list.
 	void RebuildBounds();
 
+	void UpdateOctree(URoom* Room);
+	void RebuildOctree();
+
 private:
 	UPROPERTY(Transient)
 	TArray<URoom*> Rooms;
@@ -273,6 +264,9 @@ private:
 
 	// Transient. The computed bounds of the dungeon. Updated each time the room list changes.
 	FVoxelBounds Bounds;
+
+	// Transient, used for room collision checks.
+	FDungeonOctree Octree;
 
 private:
 	struct FSaveData

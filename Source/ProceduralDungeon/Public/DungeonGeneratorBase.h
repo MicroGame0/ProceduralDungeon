@@ -1,4 +1,4 @@
-// Copyright Benoit Pelletier 2019 - 2025 All Rights Reserved.
+// Copyright Benoit Pelletier 2019 - 2026 All Rights Reserved.
 //
 // This software is available under different licenses depending on the source from which it was obtained:
 // - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
@@ -10,7 +10,6 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Math/RandomStream.h"
-#include "DungeonOctree.h"
 #include "ProceduralDungeonTypes.h"
 #include "CollisionQueryParams.h"
 #include "UObject/ScriptInterface.h"
@@ -21,7 +20,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGenerationEvent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FRoomEvent, const URoomData*, Room, const TScriptInterface<IReadOnlyRoom>&, RoomInstance);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FRoomDoorEvent, const URoomData*, Room, const FDoorDef&, Door);
 
-class ADoor;
 class URoom;
 class UDoorType;
 class UDungeonGraph;
@@ -114,7 +112,7 @@ public:
 	// @param Flipped Tells which room the door is facing between CurrentRoom (false) and NextRoom (true).
 	// @return The door actor class to spawn between CurrentRoom and NextRoom.
 	UFUNCTION(BlueprintNativeEvent, Category = "Dungeon Generator", meta = (DisplayName = "Choose Door"))
-	TSubclassOf<ADoor> ChooseDoor(const URoomData* CurrentRoom, const URoom* CurrentRoomInstance, const URoomData* NextRoom, const URoom* NextRoomInstance, const UDoorType* DoorType, bool& Flipped);
+	TSubclassOf<AActor> ChooseDoor(const URoomData* CurrentRoom, const URoom* CurrentRoomInstance, const URoomData* NextRoom, const URoom* NextRoomInstance, const UDoorType* DoorType, const UDoorType* OtherDoorType, bool& Flipped);
 
 	// ===== Optional functions to override =====
 
@@ -126,7 +124,7 @@ public:
 	// This pawn will also affect the PlayerInside variable of the rooms.
 	// By default returns GetPlayerController(0)->GetPawnOrSpectator().
 	UFUNCTION(BlueprintNativeEvent, Category = "Dungeon Generator")
-	APawn* GetVisibilityPawn();
+	APawn* GetVisibilityPawn(APlayerController* PlayerController);
 
 	// ===== Optional events =====
 
@@ -173,6 +171,11 @@ public:
 	// then RoomA has proba of 1/3 and RoomB 2/3 to be returned.
 	UFUNCTION(BlueprintCallable, Category = "Dungeon Generator")
 	URoomData* GetRandomRoomDataWeighted(const TMap<URoomData*, int>& RoomDataWeightedMap);
+
+	// Returns a random RoomCandidate from the array provided
+	// When the scores are used as weights, zero and negative scores are discarded automatically
+	UFUNCTION(BlueprintCallable, Category = "Dungeon Graph", meta = (AdvancedDisplay = "bUseScoresAsWeights"))
+	const FRoomCandidate& GetRandomRoomCandidate(const TArray<FRoomCandidate>& RoomCandidates, bool bUseScoresAsWeights = true) const;
 
 	// Returns an array of room data with at least one compatible door with the door data provided.
 	// @param bSuccess True if at least one compatible room data was found.
@@ -255,24 +258,39 @@ protected:
 	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "GenerationAlgorithm", meta = (BlueprintProtected, ReturnDisplayName = "Success", HidePin = "World"))
 	bool TryPlaceRoom(URoom* const& Room, int DoorIndex, const FDoorDef& TargetDoor, const UWorld* World = nullptr) const;
 
+	// Set the position and rotation of a room instance and return true if there is nothing colliding with it.
+	UFUNCTION(BlueprintCallable, BlueprintPure = false, Category = "GenerationAlgorithm", meta = (BlueprintProtected, ReturnDisplayName = "Success", HidePin = "World"))
+	bool TryPlaceRoomAtLocation(URoom* const& Room, FIntVector Location, EDoorDirection Rotation, const UWorld* World = nullptr) const;
+
+	// Check if the room instance provided is overlapping with existing rooms in the dungeon graph.
+	// Also checks if bUseWorldCollisionChecks is true, in which case a box overlap test is made in the persistent world.
+	bool CheckRoomOverlap(const URoom* const& Room, const UWorld* World = nullptr) const;
+
 	// Finalize the room creation by adding it to the dungeon graph. OnRoomAdded is called here.
 	UFUNCTION(BlueprintCallable, Category = "GenerationAlgorithm", meta = (BlueprintProtected, ReturnDisplayName = "Success", AutoCreateRefTerm = "DoorsToConnect", AdvancedDisplay = "DoorsToConnect,bFailIfNotConnected"))
 	bool AddRoomToDungeon(URoom* const& Room, const TArray<int>& DoorsToConnect, bool bFailIfNotConnected = true);
 	bool AddRoomToDungeon(URoom* const& Room);
+
+	// Tells the generator to wait next frame to continue the generation process.
+	UFUNCTION(BlueprintCallable, Category = "GenerationAlgorithm", meta = (BlueprintProtected))
+	void YieldGeneration();
 
 private:
 	// Choose the door classes for all room connections.
 	// This must happen *after* Graph->InitRooms() to be able to choose door class for unconnected doors.
 	void ChooseDoorClasses();
 
+	// Update the player rooms based on the player position
+	void UpdatePlayerRooms();
+
 	// Update the rooms visibility based on the player position
-	void UpdateRoomVisibility();
+	void UpdateRoomVisibility(bool bForceUpdate = false);
+
+	// Update the rooms relevancy based on the player position
+	void UpdateRoomRelevancy();
 
 	// Reset all data from a specific generation
 	void Reset();
-
-	// Clear and refill octree from the dungeon graph
-	void UpdateOctree();
 
 	// Initialize the seed depending on the seed type setting
 	void UpdateSeed();
@@ -314,6 +332,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Procedural Generation", AdvancedDisplay)
 	bool bUseWorldCollisionChecks {false};
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Procedural Generation", AdvancedDisplay)
+	class UDungeonSettings* SettingsOverrides {nullptr};
+
 	UFUNCTION(BlueprintCallable, Category = "Dungeon Generator")
 	void SetSeed(int32 NewSeed);
 
@@ -326,12 +347,13 @@ public:
 	FVector GetDungeonOffset() const;
 	FQuat GetDungeonRotation() const;
 	const FTransform& GetDungeonTransform() const;
+	const UDungeonSettings* GetSettings() const { return SettingsOverrides; }
 
 	FORCEINLINE const UDungeonGraph* GetRooms() const { return Graph; }
 	FORCEINLINE EGenerationState GetCurrentState() const { return CurrentState; }
 
 protected:
-	UPROPERTY(BlueprintReadOnly, Category = "Dungeon Generator", meta = (DisplayName = "Rooms", ExposeFunctionCategories = "Dungeon Graph"))
+	UPROPERTY(BlueprintReadOnly, Instanced, Category = "Dungeon Generator", meta = (DisplayName = "Rooms", ExposeFunctionCategories = "Dungeon Graph"))
 	UDungeonGraph* Graph;
 
 	UPROPERTY(BlueprintReadOnly, VisibleInstanceOnly, NonPIEDuplicateTransient, TextExportTransient, Category = "GUID")
@@ -360,15 +382,41 @@ private:
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Procedural Generation", meta = (AllowPrivateAccess = true))
 	bool bRebuildNavmesh {true};
 
+	// Maximum distance (in number of rooms) at which a room is considered relevant for a player.
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Procedural Generation", meta = (AllowPrivateAccess = true))
+	int32 RoomRelevanceMaxDistance {5};
+
 	EGenerationState CurrentState {EGenerationState::Idle};
 	EGeneratorFlags Flags {EGeneratorFlags::None};
 
 	// Set to avoid adding increment the seed after we've set manually the seed
 	bool bShouldIncrement {false};
 
+	struct FPlayerRooms
+	{
+		// The rooms the player has left this frame
+		TSet<URoom*> OldRooms;
+		// The rooms the player is currently inside this frame
+		TSet<URoom*> CurrentRooms;
+		// Whether the current rooms has changed this frame
+		bool bHasChanged {false};
+
+		// Move current rooms to old rooms and clear current rooms
+		void Roll()
+		{
+			OldRooms = MoveTemp(CurrentRooms);
+			CurrentRooms.Empty();
+		}
+
+		void AddCurrentRoom(URoom* Room)
+		{
+			OldRooms.Remove(Room);
+			CurrentRooms.Add(Room);
+		}
+	};
+
 	// Occlusion culling system
-	TUniquePtr<FDungeonOctree> Octree;
-	TSet<URoom*> CurrentPlayerRooms;
+	TMap<int32, FPlayerRooms> PlayerRooms;
 
 	// Transient. Only used to detect when occlusion setting is changed.
 	bool bWasOcclusionEnabled {false};
@@ -381,4 +429,7 @@ private:
 
 	// Transient. Cached collision params used when bUseWorldCollisionChecks is true
 	FCollisionQueryParams WorldCollisionParams;
+
+	// Transient. Current generation status
+	EGenerationStatus GenerationStatus {EGenerationStatus::NotStarted};
 };

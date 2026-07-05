@@ -1,4 +1,4 @@
-// Copyright Benoit Pelletier 2023 - 2025 All Rights Reserved.
+// Copyright Benoit Pelletier 2023 - 2026 All Rights Reserved.
 //
 // This software is available under different licenses depending on the source from which it was obtained:
 // - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
@@ -15,6 +15,7 @@
 
 class URoom;
 class URoomCustomData;
+class ARoomLevel;
 
 UCLASS()
 class PROCEDURALDUNGEON_API UDungeonBlueprintLibrary : public UBlueprintFunctionLibrary
@@ -23,10 +24,12 @@ class PROCEDURALDUNGEON_API UDungeonBlueprintLibrary : public UBlueprintFunction
 
 public:
 	UFUNCTION(BlueprintPure, Category = "Utilities|Procedural Dungeon")
-	static bool IsDoorOfType(const TSubclassOf<class ADoor> DoorClass, const class UDoorType* DoorType);
+	static bool IsDoorOfType(const TSubclassOf<class AActor> DoorClass, const class UDoorType* DoorType);
 
 	UFUNCTION(BlueprintPure, Category = "Utilities", meta = (DisplayName = "Equal (Data Table Row Handle)", CompactNodeTitle = "=="))
 	static bool CompareDataTableRows(const FDataTableRowHandle& A, const FDataTableRowHandle& B);
+
+	static const ARoomLevel* GetLevelScript(const AActor* Target);
 
 	// Returns the room instance the actor is in.
 	// If the actor is spawned at runtime or the owning level is not a room level, returns null.
@@ -37,6 +40,9 @@ public:
 	// If no owning room or no custom data of this type, returns null.
 	UFUNCTION(BlueprintCallable, Category = "Utilities|Procedural Dungeon", meta = (DefaultToSelf = "Target", ExpandBoolAsExecs = "ReturnValue", DeterminesOutputType = "CustomDataClass", DynamicOutputParam = "CustomData"))
 	static bool GetOwningRoomCustomData(const AActor* Target, TSubclassOf<URoomCustomData> CustomDataClass, URoomCustomData*& CustomData);
+	
+	UFUNCTION(BlueprintPure, Category = "Utilities|Procedural Dungeon", meta = (DefaultToSelf = "Target"))
+	static const URoomData* GetLevelRoomData(const AActor* Target);
 
 	UFUNCTION(BlueprintPure, Category = "DoorDef", meta = (DisplayName = "Opposite", CompactNodeTitle = "Opposite"))
 	static FDoorDef DoorDef_GetOpposite(const FDoorDef& DoorDef);
@@ -123,7 +129,7 @@ public:
 	// ===== Plugin Settings Accessors =====
 
 	// Returns the room unit size in unreal units
-	UFUNCTION(BlueprintPure, Category = "Procedural Dungeon|Settings", meta = (DisplayName = "Get Room Unit"))
+	UFUNCTION(BlueprintPure, Category = "Procedural Dungeon|Settings", meta = (DisplayName = "Get Default Room Unit", DeprecatedFunction, DeprecationMessage = "Use the GetRoomUnit from the DungeonSettings class instead."))
 	static FVector Settings_RoomUnit();
 
 	// Returns the default door type's size

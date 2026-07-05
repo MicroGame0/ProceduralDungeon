@@ -1,4 +1,4 @@
-// Copyright Benoit Pelletier 2019 - 2025 All Rights Reserved.
+// Copyright Benoit Pelletier 2019 - 2026 All Rights Reserved.
 //
 // This software is available under different licenses depending on the source from which it was obtained:
 // - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
@@ -23,6 +23,9 @@
 #include "Engine/Engine.h"
 #include "Engine/LevelStreamingDynamic.h"
 #include "Misc/EngineVersionComparison.h"
+#include "ProceduralDungeonCustomVersion.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
 
 void URoom::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
@@ -70,7 +73,7 @@ void URoom::Init(URoomData* Data, ADungeonGeneratorBase* Generator, int32 RoomId
 	SetPosition(FIntVector::ZeroValue);
 	SetDirection(EDoorDirection::North);
 
-	if (RoomData.IsValid())
+	if (IsValid(RoomData))
 	{
 		MARK_PROPERTY_DIRTY_FROM_NAME(URoom, Connections, this);
 		Connections.SetNum(RoomData->GetNbDoor());
@@ -131,7 +134,7 @@ void URoom::Instantiate(UWorld* World)
 {
 	if (Instance == nullptr)
 	{
-		if (RoomData.IsNull())
+		if (!IsValid(RoomData))
 		{
 			DungeonLog_Error("Failed to instantiate the room: it has no RoomData.");
 			return;
@@ -157,7 +160,7 @@ void URoom::Instantiate(UWorld* World)
 		}
 		InstanceName.Appendf(TEXT("_%d"), Id);
 
-		FVector FinalLocation = rotation.RotateVector(Dungeon::RoomUnit() * FVector(Position)) + offset;
+		FVector FinalLocation = rotation.RotateVector(RoomData->GetRoomUnit() * FVector(Position)) + offset;
 		FQuat FinalRotation = rotation * ToQuaternion(Direction);
 		Instance = LoadInstance(World, Level, InstanceName.ToString(), FinalLocation, FinalRotation.Rotator());
 
@@ -222,6 +225,54 @@ void URoom::ForceVisibility(bool bForce)
 		UpdateVisibility();
 }
 
+int32 URoom::GetRelevancyLevel(APlayerController* PlayerController) const
+{
+	if (!IsValid(PlayerController))
+	{
+		DungeonLog_Warning("GetRelevancyLevel called with null PlayerController");
+		return -1;
+	}
+
+	if (!IsValid(PlayerController->PlayerState))
+		return -1;
+
+	const int32* Level = RelevancyLevels.Find(PlayerController->PlayerState->GetPlayerId());
+	return (Level != nullptr) ? *Level : -1;
+}
+
+int32 URoom::GetMaxRelevancyLevel() const
+{
+	int32 MaxLevel = -1;
+	for (const auto& Pair : RelevancyLevels)
+	{
+		if (Pair.Value > MaxLevel)
+			MaxLevel = Pair.Value;
+	}
+	return MaxLevel;
+}
+
+int32 URoom::GetMinRelevancyLevel() const
+{
+	int32 MinLevel = -1;
+	for (const auto& Pair : RelevancyLevels)
+	{
+		if (MinLevel < 0 || Pair.Value < MinLevel)
+			MinLevel = Pair.Value;
+	}
+	return MinLevel;
+}
+
+void URoom::GetAllRelevancyLevels(TMap<APlayerController*, int32>& OutRelevancyLevels) const
+{
+	OutRelevancyLevels.Empty();
+	for (const auto& Pair : RelevancyLevels)
+	{
+		APlayerController* Controller = ActorUtils::GetPlayerControllerFromPlayerId(this, Pair.Key);
+		if (IsValid(Controller))
+			OutRelevancyLevels.Add(Controller, Pair.Value);
+	}
+}
+
 void URoom::Lock(bool bLock)
 {
 	SET_SUBOBJECT_REPLICATED_PROPERTY_VALUE(bIsLocked, bLock);
@@ -271,7 +322,7 @@ void URoom::OnRep_Id()
 
 void URoom::OnRep_RoomData()
 {
-	DungeonLog_Debug("[%s] Room '%s' RoomData Replicated: %s", *GetAuthorityName(), *GetNameSafe(this), *GetNameSafe(RoomData.Get()));
+	DungeonLog_Debug("[%s] Room '%s' RoomData Replicated: %s", *GetAuthorityName(), *GetNameSafe(this), *GetNameSafe(RoomData));
 }
 
 void URoom::OnRep_Connections()
@@ -349,7 +400,7 @@ FIntVector URoom::GetDoorWorldPosition(int DoorIndex) const
 
 bool URoom::IsDoorIndexValid(int32 DoorIndex) const
 {
-	check(RoomData.IsValid());
+	check(IsValid(RoomData));
 	return DoorIndex >= 0 && DoorIndex < RoomData->Doors.Num();
 }
 
@@ -378,13 +429,13 @@ int URoom::GetOtherDoorIndex(int32 DoorIndex) const
 
 FDoorDef URoom::GetDoorDef(int32 DoorIndex) const
 {
-	check(RoomData.IsValid());
+	check(IsValid(RoomData));
 	return RoomToWorld(RoomData->GetDoorDef(DoorIndex));
 }
 
 FDoorDef URoom::GetDoorDefAt(FIntVector WorldPos, EDoorDirection WorldRot) const
 {
-	check(RoomData.IsValid());
+	check(IsValid(RoomData));
 	int32 DoorIndex = GetDoorIndexAt(WorldPos, WorldRot);
 	return (DoorIndex >= 0) ? GetDoorDef(DoorIndex) : FDoorDef::Invalid;
 }
@@ -462,57 +513,101 @@ bool URoom::IsOccupied(FIntVector Cell)
 {
 	FIntVector local = WorldToRoom(Cell);
 	FBoxMinAndMax Bounds = RoomData->GetIntBounds();
-	return local.X >= Bounds.Min.X && local.X < Bounds.Max.X
-		&& local.Y >= Bounds.Min.Y && local.Y < Bounds.Max.Y
-		&& local.Z >= Bounds.Min.Z && local.Z < Bounds.Max.Z;
+	return local.X >= Bounds.GetMin().X && local.X < Bounds.GetMax().X
+		&& local.Y >= Bounds.GetMin().Y && local.Y < Bounds.GetMax().Y
+		&& local.Z >= Bounds.GetMin().Z && local.Z < Bounds.GetMax().Z;
 }
 
 FBoxCenterAndExtent URoom::GetBounds() const
 {
-	check(RoomData.IsValid());
+	check(IsValid(RoomData));
 	return RoomData->GetBounds(GetTransform());
+}
+
+int32 URoom::GetSubBoundsCount() const
+{
+	check(IsValid(RoomData));
+	return RoomData->BoundingBoxes.Num();
 }
 
 FBoxCenterAndExtent URoom::GetLocalBounds() const
 {
-	check(RoomData.IsValid());
+	check(IsValid(RoomData));
 	return RoomData->GetBounds();
 }
 
 FBoxMinAndMax URoom::GetIntBounds() const
 {
-	check(RoomData.IsValid());
+	check(IsValid(RoomData));
 	return RoomToWorld(RoomData->GetIntBounds());
 }
 
 FVoxelBounds URoom::GetVoxelBounds() const
 {
-	check(RoomData.IsValid());
+	check(IsValid(RoomData));
 	return RoomToWorld(RoomData->GetVoxelBounds());
+}
+
+FBoxCenterAndExtent URoom::GetSubBounds(int32 Index) const
+{
+	check(IsValid(RoomData));
+	return RoomData->GetSubBounds(Index, GetTransform());
 }
 
 FTransform URoom::GetTransform() const
 {
+	checkf(IsValid(RoomData), TEXT("Invalid RoomData in URoom class!"));
 	FTransform Transform;
-	Transform.SetLocation(FVector(Position) * Dungeon::RoomUnit());
+	Transform.SetLocation(FVector(Position) * RoomData->GetRoomUnit());
 	Transform.SetRotation(ToQuaternion(Direction));
 	return Transform;
 }
 
-void URoom::SetVisible(bool Visible)
+void URoom::SetVisible(bool Visible, bool bForceUpdate)
 {
 	const bool bWasVisible = IsVisible();
 	bIsVisible = Visible;
-	if (bWasVisible != IsVisible())
+	if (bForceUpdate || bWasVisible != IsVisible())
 		UpdateVisibility();
 }
 
-void URoom::SetPlayerInside(bool PlayerInside)
+void URoom::SetRelevancyLevel(int32 PlayerID, int32 Level)
 {
-	if (bPlayerInside == PlayerInside)
+	int32* FoundLevel = RelevancyLevels.Find(PlayerID);
+	if (Level < 0)
+	{
+		if (FoundLevel == nullptr)
+			return;
+		RelevancyLevels.Remove(PlayerID);
+	}
+	else
+	{
+		if (FoundLevel != nullptr && *FoundLevel == Level)
+			return;
+		RelevancyLevels.Add(PlayerID, Level);
+	}
+	APlayerController* Controller = ActorUtils::GetPlayerControllerFromPlayerId(GetWorld(), PlayerID);
+	DungeonLog_Debug("Found player controller for id %d: %s", PlayerID, *GetNameSafe(Controller));
+	OnRelevancyChanged.Broadcast(this, Controller, Level);
+}
+
+void URoom::SetPlayerInside(int32 PlayerID, bool PlayerInside)
+{
+	if (PlayerIDInside.Contains(PlayerID) != PlayerInside)
 		return;
 
-	bPlayerInside = PlayerInside;
+	if (PlayerInside)
+		PlayerIDInside.Add(PlayerID);
+	else
+		PlayerIDInside.Remove(PlayerID);
+}
+
+bool URoom::IsPlayerInside(const APlayerController* PlayerController) const
+{
+	if (!IsValid(PlayerController) || !IsValid(PlayerController->PlayerState))
+		return PlayerIDInside.Num() > 0;
+	int32 UniqueID = PlayerController->PlayerState->GetPlayerId();
+	return PlayerIDInside.Contains(UniqueID);
 }
 
 bool URoom::CreateCustomData(const TSubclassOf<URoomCustomData>& DataType)
@@ -531,7 +626,7 @@ bool URoom::CreateCustomData(const TSubclassOf<URoomCustomData>& DataType)
 
 bool URoom::CreateAllCustomData()
 {
-	check(RoomData.IsValid());
+	check(IsValid(RoomData));
 	bool bSucceeded = true;
 	for (auto Datum : RoomData->CustomData)
 	{
@@ -584,19 +679,19 @@ FRandomStream URoom::GetRandomStream() const
 	return GeneratorOwner->GetRandomStream();
 }
 
-ADoor* URoom::GetDoor(int32 DoorIndex) const
+AActor* URoom::GetDoor(int32 DoorIndex) const
 {
 	if (!Connections.IsValidIndex(DoorIndex))
 		return nullptr;
 	return URoomConnection::GetDoorInstance(Connections[DoorIndex].Get());
 }
 
-void URoom::GetAllDoors(TArray<ADoor*>& OutDoors) const
+void URoom::GetAllDoors(TArray<AActor*>& OutDoors) const
 {
 	OutDoors.Reset();
 	for (const auto& Connection : Connections)
 	{
-		ADoor* Door = URoomConnection::GetDoorInstance(Connection.Get());
+		AActor* Door = URoomConnection::GetDoorInstance(Connection.Get());
 		if (IsValid(Door))
 			OutDoors.Add(Door);
 	}
@@ -627,7 +722,7 @@ int URoom::CountConnectedDoors() const
 	int ConnectedDoors = 0;
 	for (const auto& Connection : Connections)
 	{
-		if (URoomConnection::GetOtherRoom(Connection.Get(), this) == nullptr)
+		if (URoomConnection::GetOtherRoom(Connection.Get(), this) != nullptr)
 			++ConnectedDoors;
 	}
 	return ConnectedDoors;
@@ -664,7 +759,7 @@ int32 URoom::GetConnectedRoomIndex(const URoom* OtherRoom) const
 	return -1;
 }
 
-void URoom::GetDoorsWith(const URoom* OtherRoom, TArray<ADoor*>& Doors) const
+void URoom::GetDoorsWith(const URoom* OtherRoom, TArray<AActor*>& Doors) const
 {
 	Doors.Empty();
 	for (const auto& Connection : Connections)
@@ -672,10 +767,21 @@ void URoom::GetDoorsWith(const URoom* OtherRoom, TArray<ADoor*>& Doors) const
 		if (OtherRoom != URoomConnection::GetOtherRoom(Connection.Get(), this))
 			continue;
 
-		ADoor* Door = URoomConnection::GetDoorInstance(Connection.Get());
+		AActor* Door = URoomConnection::GetDoorInstance(Connection.Get());
 		if (IsValid(Door))
 			Doors.Add(Door);
 	}
+}
+
+TArray<URoomConnection*> URoom::GetConnections() const
+{
+	TArray<URoomConnection*> ValidConnections;
+	for (const auto& Connection : Connections)
+	{
+		if (Connection.IsValid())
+			ValidConnections.Add(Connection.Get());
+	}
+	return ValidConnections;
 }
 
 FVector URoom::GetBoundsCenter() const
@@ -733,6 +839,28 @@ bool URoom::SerializeObject(FStructuredArchive::FRecord& Record, bool bIsLoading
 	Record.EnterField(AR_FIELD_NAME("LevelActor")) << SaveData->LevelActor;
 	Record.EnterField(AR_FIELD_NAME("Actors")) << SaveData->Actors;
 
+	// Handle old `RoomData` SoftObjectPtr
+	const int32 DungeonVersion = Record.GetUnderlyingArchive().CustomVer(FProceduralDungeonCustomVersion::GUID);
+	DungeonLog_Debug("Serializing RoomData (Version: %d, IsLoading: %d)", DungeonVersion, bIsLoading);
+	if (DungeonVersion < FProceduralDungeonCustomVersion::SoftObjectPtrFix)
+	{
+		if (bIsLoading)
+		{
+			const bool bIsSoftPtrNull = SoftRoomData_DEPRECATED.IsNull();
+			RoomData = !bIsSoftPtrNull ? SoftRoomData_DEPRECATED.Get() : nullptr;
+			SoftRoomData_DEPRECATED.Reset();
+			DungeonLog_Debug("Converted old RoomData SoftObjectPtr (IsNull: %d) to regular pointer: %s", bIsSoftPtrNull, *GetNameSafe(RoomData));
+		}
+		else
+		{
+			checkNoEntry(); // Should never happen when saving.
+		}
+	}
+	else
+	{
+		SerializeUObjectRef(Record.EnterField(AR_FIELD_NAME("RoomData")), RoomData);
+	}
+
 	if (!bIsLoading)
 	{
 		// When saving, no need to keep the data anymore.
@@ -754,7 +882,7 @@ bool URoom::FixupReferences(UObject* Context)
 	GeneratorOwner = GeneratorProvider->GetGenerator();
 	if (!GeneratorOwner.IsValid())
 	{
-		DungeonLog_WarningSilent("Failed to fixup references: Generator is invalid.", *GetNameSafe(Context));
+		DungeonLog_WarningSilent("Failed to fixup references: Generator is invalid.");
 		return false;
 	}
 
@@ -888,39 +1016,6 @@ void URoom::DispatchCallbackToSavedLevelActors(TFunction<void(AActor*)> Callback
 		DungeonLog_Debug("- Dispatch to actor: %s.", *GetNameSafe(Actor));
 		Callback(Actor);
 	}
-}
-
-// AABB Overlapping
-bool URoom::Overlap(const URoom& A, const URoom& B)
-{
-	FBoxMinAndMax BoxA = A.GetIntBounds();
-	FBoxMinAndMax BoxB = B.GetIntBounds();
-	return FBoxMinAndMax::Overlap(BoxA, BoxB);
-}
-
-bool URoom::Overlap(const URoom& Room, const TArray<URoom*>& RoomList)
-{
-	bool overlap = false;
-	for (int i = 0; i < RoomList.Num() && !overlap; i++)
-	{
-		if (Overlap(Room, *RoomList[i]))
-		{
-			overlap = true;
-		}
-	}
-	return overlap;
-}
-
-URoom* URoom::GetRoomAt(FIntVector RoomCell, const TArray<URoom*>& RoomList)
-{
-	for (URoom* Room : RoomList)
-	{
-		if (IsValid(Room) && Room->IsOccupied(RoomCell))
-		{
-			return Room;
-		}
-	}
-	return nullptr;
 }
 
 ULevelStreamingDynamic* URoom::LoadInstance(UObject* WorldContextObject, const TSoftObjectPtr<UWorld>& Level, const FString& InstanceNameSuffix, FVector Location, FRotator Rotation)

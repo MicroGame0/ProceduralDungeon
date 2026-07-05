@@ -1,4 +1,4 @@
-// Copyright Benoit Pelletier 2024 - 2025 All Rights Reserved.
+// Copyright Benoit Pelletier 2024 - 2026 All Rights Reserved.
 //
 // This software is available under different licenses depending on the source from which it was obtained:
 // - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
@@ -11,6 +11,7 @@
 #include "RoomData.h"
 #include "DoorType.h"
 #include "./Classes/RoomCustomDataChildClasses.h"
+#include "./Classes/RoomConstraintChildClasses.h"
 #include "UObject/Package.h"
 #include "TestUtils.h"
 #include "VoxelBounds/VoxelBounds.h"
@@ -47,8 +48,7 @@ bool FRoomDataTests::RunTest(const FString& Parameters)
 		//	   -2 +---+-v-+---+
 		//		 -1   0   1   2
 		CREATE_ROOM_DATA(RoomData);
-		RoomData->FirstPoint = FIntVector(-2, -1, -1);
-		RoomData->SecondPoint = FIntVector(1, 2, 2);
+		RoomData->BoundingBoxes[0].SetMinAndMax(FIntVector(-2, -1, -1), FIntVector(1, 2, 2));
 
 		FDoorDef Door;
 		Door.Position = FIntVector(-2, 0, 0);
@@ -197,8 +197,6 @@ bool FRoomDataTests::RunTest(const FString& Parameters)
 	// Test HasDoorOfType and variants
 	{
 		CREATE_ROOM_DATA(RoomData);
-		RoomData->FirstPoint = FIntVector(0, 0, 0);
-		RoomData->SecondPoint = FIntVector(1, 1, 1);
 
 		CREATE_DATA_ASSET(UDoorType, DoorA);
 		CREATE_DATA_ASSET(UDoorType, DoorB);
@@ -241,8 +239,6 @@ bool FRoomDataTests::RunTest(const FString& Parameters)
 	// Test HasCustomData and variants
 	{
 		CREATE_ROOM_DATA(RoomData);
-		RoomData->FirstPoint = FIntVector(0, 0, 0);
-		RoomData->SecondPoint = FIntVector(1, 1, 1);
 
 		RoomData->CustomData.Add(UCustomDataA::StaticClass());
 		RoomData->CustomData.Add(UCustomDataB::StaticClass());
@@ -276,23 +272,19 @@ bool FRoomDataTests::RunTest(const FString& Parameters)
 	{
 		// Should have Size=(1,1,1) and Volume=1
 		CREATE_ROOM_DATA(RoomDataA);
-		RoomDataA->FirstPoint = FIntVector(0, 1, 0);
-		RoomDataA->SecondPoint = FIntVector(1, 0, 1);
+		RoomDataA->BoundingBoxes[0].SetMinAndMax(FIntVector(0, 1, 0), FIntVector(1, 0, 1));
 
 		// Should have Size=(2,1,1) and Volume=2
 		CREATE_ROOM_DATA(RoomDataB);
-		RoomDataB->FirstPoint = FIntVector(-1, 1, 0);
-		RoomDataB->SecondPoint = FIntVector(1, 0, 1);
+		RoomDataB->BoundingBoxes[0].SetMinAndMax(FIntVector(-1, 1, 0), FIntVector(1, 0, 1));
 
 		// Should have Size=(2,2,1) and Volume=4
 		CREATE_ROOM_DATA(RoomDataC);
-		RoomDataC->FirstPoint = FIntVector(-1, 1, 0);
-		RoomDataC->SecondPoint = FIntVector(1, -1, 1);
+		RoomDataC->BoundingBoxes[0].SetMinAndMax(FIntVector(-1, 1, 0), FIntVector(1, -1, 1));
 
 		// Should have Size=(2,2,2) and Volume=8
 		CREATE_ROOM_DATA(RoomDataD);
-		RoomDataD->FirstPoint = FIntVector(-1, 1, -1);
-		RoomDataD->SecondPoint = FIntVector(1, -1, 1);
+		RoomDataD->BoundingBoxes[0].SetMinAndMax(FIntVector(-1, 1, -1), FIntVector(1, -1, 1));
 
 		// GetSize
 		{
@@ -314,8 +306,6 @@ bool FRoomDataTests::RunTest(const FString& Parameters)
 	// Test GetVoxelBounds
 	{
 		CREATE_ROOM_DATA(RoomDataA);
-		RoomDataA->FirstPoint = FIntVector(0, 0, 0);
-		RoomDataA->SecondPoint = FIntVector(1, 1, 1);
 		RoomDataA->Doors.Add({{0, 0, 0}, EDoorDirection::North});
 
 		// Should have one cell at (0,0,0) with a door at (0,0,0)[North]
@@ -335,32 +325,31 @@ bool FRoomDataTests::RunTest(const FString& Parameters)
 		}
 
 		CREATE_ROOM_DATA(RoomDataB);
-		RoomDataB->FirstPoint = FIntVector(-1, 0, 0);
-		RoomDataB->SecondPoint = FIntVector(2, 1, 1);
-		RoomDataB->Doors.Add({{0, 0, 0}, EDoorDirection::South});
-		RoomDataB->Doors.Add({{1, 0, 0}, EDoorDirection::East});
+		RoomDataB->BoundingBoxes[0].SetMinAndMax(FIntVector(-1, 0, 0), FIntVector(2, 1, 1));
+		RoomDataB->Doors.Add({{0, 0, 0}, EDoorDirection::West});
+		RoomDataB->Doors.Add({{1, 0, 0}, EDoorDirection::North});
 
-		// Should have 3 cells at (-1,0,0), (0,0,0), (1,0,0) with doors at (0,0,0)[South] and (1,0,0)[East]
+		// Should have 3 cells at (-1,0,0), (0,0,0), (1,0,0) with doors at (0,0,0)[West] and (1,0,0)[North]
 		{
 			FVoxelBounds ExpectedBounds;
 			ExpectedBounds.AddCell({-1, 0, 0});
 			ExpectedBounds.AddCell({0, 0, 0});
 			ExpectedBounds.AddCell({1, 0, 0});
 
-			ExpectedBounds.SetCellConnection({-1, 0, 0}, FVoxelBounds::EDirection::North, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
+			ExpectedBounds.SetCellConnection({-1, 0, 0}, FVoxelBounds::EDirection::East, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
 			ExpectedBounds.SetCellConnection({-1, 0, 0}, FVoxelBounds::EDirection::West, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
 			ExpectedBounds.SetCellConnection({-1, 0, 0}, FVoxelBounds::EDirection::South, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
 			ExpectedBounds.SetCellConnection({-1, 0, 0}, FVoxelBounds::EDirection::Up, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
 			ExpectedBounds.SetCellConnection({-1, 0, 0}, FVoxelBounds::EDirection::Down, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
 
-			ExpectedBounds.SetCellConnection({0, 0, 0}, FVoxelBounds::EDirection::North, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
-			ExpectedBounds.SetCellConnection({0, 0, 0}, FVoxelBounds::EDirection::South, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Door));
+			ExpectedBounds.SetCellConnection({0, 0, 0}, FVoxelBounds::EDirection::East, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
+			ExpectedBounds.SetCellConnection({0, 0, 0}, FVoxelBounds::EDirection::West, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Door));
 			ExpectedBounds.SetCellConnection({0, 0, 0}, FVoxelBounds::EDirection::Up, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
 			ExpectedBounds.SetCellConnection({0, 0, 0}, FVoxelBounds::EDirection::Down, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
 
-			ExpectedBounds.SetCellConnection({1, 0, 0}, FVoxelBounds::EDirection::North, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
-			ExpectedBounds.SetCellConnection({1, 0, 0}, FVoxelBounds::EDirection::South, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
-			ExpectedBounds.SetCellConnection({1, 0, 0}, FVoxelBounds::EDirection::East, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Door));
+			ExpectedBounds.SetCellConnection({1, 0, 0}, FVoxelBounds::EDirection::North, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Door));
+			ExpectedBounds.SetCellConnection({1, 0, 0}, FVoxelBounds::EDirection::East, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
+			ExpectedBounds.SetCellConnection({1, 0, 0}, FVoxelBounds::EDirection::West, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
 			ExpectedBounds.SetCellConnection({1, 0, 0}, FVoxelBounds::EDirection::Up, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
 			ExpectedBounds.SetCellConnection({1, 0, 0}, FVoxelBounds::EDirection::Down, FVoxelBoundsConnection(EVoxelBoundsConnectionType::Wall));
 
@@ -369,8 +358,7 @@ bool FRoomDataTests::RunTest(const FString& Parameters)
 		}
 
 		CREATE_ROOM_DATA(RoomDataC);
-		RoomDataC->FirstPoint = FIntVector(0, 0, -1);
-		RoomDataC->SecondPoint = FIntVector(1, 1, 2);
+		RoomDataC->BoundingBoxes[0].SetMinAndMax(FIntVector(0, 0, -1), FIntVector(1, 1, 2));
 		RoomDataC->Doors.Add({{0, 0, 0}, EDoorDirection::North});
 		RoomDataC->Doors.Add({{0, 0, 1}, EDoorDirection::South});
 
@@ -401,6 +389,53 @@ bool FRoomDataTests::RunTest(const FString& Parameters)
 			FVoxelBounds ConvertedBounds = RoomDataC->GetVoxelBounds();
 			TestEqual("RoomDataC->GetVoxelBounds() == ExpectedBounds", ConvertedBounds, ExpectedBounds);
 		}
+	}
+
+	// Test Room Constraints
+	{
+	#define CHECK_CONSTRAINTS(DATA) URoomData::DoesPassAllConstraints(nullptr, DATA, FIntVector::ZeroValue, EDoorDirection::North)
+
+		TestFalse("null data should fail.", CHECK_CONSTRAINTS(nullptr));
+
+		CREATE_DATA_ASSET(UConstraintPass, Pass);
+		CREATE_DATA_ASSET(UConstraintFail, Fail);
+
+		CREATE_ROOM_DATA(RoomDataA);
+		TestTrue("No constraint should pass.", CHECK_CONSTRAINTS(RoomDataA.Get()));
+
+		CREATE_ROOM_DATA(RoomDataB);
+		RoomDataB->Constraints.Add(Pass.Get());
+		TestTrue("One passing constraint should pass.", CHECK_CONSTRAINTS(RoomDataB.Get()));
+
+		CREATE_ROOM_DATA(RoomDataC);
+		RoomDataC->Constraints.Add(Fail.Get());
+		TestFalse("One failing constraint should fail.", CHECK_CONSTRAINTS(RoomDataC.Get()));
+
+		CREATE_ROOM_DATA(RoomDataD);
+		RoomDataD->Constraints.Add(Pass.Get());
+		RoomDataD->Constraints.Add(Pass.Get());
+		RoomDataD->Constraints.Add(Pass.Get());
+		TestTrue("All passing constraint should pass.", CHECK_CONSTRAINTS(RoomDataD.Get()));
+
+		CREATE_ROOM_DATA(RoomDataE);
+		RoomDataE->Constraints.Add(Fail.Get());
+		RoomDataE->Constraints.Add(Pass.Get());
+		RoomDataE->Constraints.Add(Pass.Get());
+		TestFalse("First failing constraint should fail.", CHECK_CONSTRAINTS(RoomDataE.Get()));
+
+		CREATE_ROOM_DATA(RoomDataF);
+		RoomDataF->Constraints.Add(Pass.Get());
+		RoomDataF->Constraints.Add(Fail.Get());
+		RoomDataF->Constraints.Add(Pass.Get());
+		TestFalse("Second failing constraint should fail.", CHECK_CONSTRAINTS(RoomDataF.Get()));
+
+		CREATE_ROOM_DATA(RoomDataG);
+		RoomDataG->Constraints.Add(Pass.Get());
+		RoomDataG->Constraints.Add(Pass.Get());
+		RoomDataG->Constraints.Add(Fail.Get());
+		TestFalse("Third failing constraint should fail.", CHECK_CONSTRAINTS(RoomDataG.Get()));
+
+	#undef CHECK_CONSTRAINTS
 	}
 
 	return true;

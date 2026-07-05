@@ -1,4 +1,4 @@
-// Copyright Benoit Pelletier 2023 - 2025 All Rights Reserved.
+// Copyright Benoit Pelletier 2023 - 2026 All Rights Reserved.
 //
 // This software is available under different licenses depending on the source from which it was obtained:
 // - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
@@ -19,6 +19,13 @@
 #include "Engine/LevelStreamingDynamic.h"
 #include "Utils/DungeonSaveUtils.h"
 #include "ProceduralDungeonUtils.h"
+#include "DungeonSettings.h"
+
+UDungeonGraph::UDungeonGraph()
+	: Super()
+	, Octree(FVector::ZeroVector, HALF_WORLD_MAX)
+{
+}
 
 void UDungeonGraph::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
@@ -92,8 +99,11 @@ void UDungeonGraph::PostLoadDungeon_Implementation()
 
 void UDungeonGraph::AddRoom(URoom* Room)
 {
+	check(IsValid(Room));
+
 	Rooms.Add(Room);
 	UpdateBounds(Room);
+	UpdateOctree(Room);
 }
 
 void UDungeonGraph::InitRooms()
@@ -119,6 +129,18 @@ void UDungeonGraph::InitRooms()
 		const URoomData* Data = Room->GetRoomData();
 		Data->InitializeRoom(Room, this);
 	}
+}
+
+bool UDungeonGraph::CanRoomFit(const URoom* Room) const
+{
+	bool bCanFit = true;
+	for (int32 i = 0; i < Room->GetSubBoundsCount() && bCanFit; ++i)
+	{
+		FindElementsWithBoundsTest(Octree, Room->GetSubBounds(i), [&bCanFit, Room](const FDungeonOctreeElement& Element) {
+			bCanFit = false;
+		});
+	}
+	return bCanFit;
 }
 
 bool UDungeonGraph::TryConnectDoor(URoom* Room, int32 DoorIndex)
@@ -168,6 +190,16 @@ bool UDungeonGraph::TryConnectToExistingDoors(URoom* Room)
 	return HasConnection;
 }
 
+TArray<URoom*> UDungeonGraph::GetAllRoomsOverlapping(const FBox& Box) const
+{
+	TArray<URoom*> RoomsInBox;
+	FindElementsWithBoundsTest(Octree, Box, [&RoomsInBox](const FDungeonOctreeElement& Element) {
+		URoom* Room = Element.Room;
+		RoomsInBox.AddUnique(Room);
+	});
+	return RoomsInBox;
+}
+
 void UDungeonGraph::RetrieveRoomsFromLoadedData()
 {
 	if (Rooms.Num() > 0)
@@ -185,6 +217,7 @@ void UDungeonGraph::RetrieveRoomsFromLoadedData()
 	IDungeonCustomSerialization::DispatchFixupReferences(this, this);
 
 	RebuildBounds();
+	RebuildOctree();
 }
 
 void UDungeonGraph::Connect(URoom* RoomA, int32 DoorA, URoom* RoomB, int32 DoorB)
@@ -247,7 +280,7 @@ URoom* UDungeonGraph::GetRandomRoom(const TArray<URoom*>& RoomList) const
 		return nullptr;
 	}
 
-	if (!HasRooms())
+	if (RoomList.Num() <= 0)
 		return nullptr;
 
 	int32 rand = Generator->GetRandomStream().FRandRange(0, RoomList.Num() - 1);
@@ -328,7 +361,16 @@ bool UDungeonGraph::GetPathBetween(const URoom* A, const URoom* B, TArray<URoom*
 
 URoom* UDungeonGraph::GetRoomAt(FIntVector RoomCell) const
 {
-	return URoom::GetRoomAt(RoomCell, Rooms);
+	const FVector RoomUnit = UDungeonSettings::GetRoomUnit(Generator->GetSettings());
+	const FVector Extents = 0.5f * RoomUnit;
+	const FBoxCenterAndExtent CellBounds(Dungeon::ToWorldLocation(RoomCell, RoomUnit) + Extents, Extents);
+
+	URoom* FoundRoom = nullptr;
+	FindElementsWithBoundsTest(Octree, CellBounds, [&FoundRoom](const FDungeonOctreeElement& Element) {
+		FoundRoom = Element.Room;
+	});
+
+	return FoundRoom;
 }
 
 FVector UDungeonGraph::GetDungeonBoundsCenter() const
@@ -343,13 +385,10 @@ FVector UDungeonGraph::GetDungeonBoundsExtent() const
 	return GetDungeonBounds(Transform).Extent;
 }
 
-struct FRoomCandidatePredicate
+static bool RoomCandidatePredicate(const FRoomCandidate& A, const FRoomCandidate& B)
 {
-	bool operator()(const FRoomCandidate& A, const FRoomCandidate& B) const
-	{
-		return A.Score > B.Score;
-	}
-};
+	return A.Score > B.Score;
+}
 
 bool UDungeonGraph::FilterAndSortRooms(const TArray<URoomData*>& RoomList, const FDoorDef& FromDoor, TArray<FRoomCandidate>& SortedRooms, const FScoreCallback& CustomScore) const
 {
@@ -367,27 +406,31 @@ bool UDungeonGraph::FilterAndSortRooms(const TArray<URoomData*>& RoomList, const
 		// Try each possible door
 		for (int i = 0; i < RoomData->GetNbDoor(); ++i)
 		{
-			FDoorDef Door = RoomData->Doors[i];
+			const FDoorDef& Door = RoomData->Doors[i];
 
 			// Filter out the door candidate if not compatible with the door
 			// we want to connect from.
 			if (!FDoorDef::AreCompatible(TargetDoor, Door))
 				continue;
 
-			// Create a new bounds placed at the target door
-			EDoorDirection Direction = TargetDoor.Direction - Door.Direction;
-			FVoxelBounds NewBounds = Rotate(DataBounds, Direction);
-			NewBounds += TargetDoor.Position - Rotate(Door.Position, Direction);
+			// Compute new room placement
+			const EDoorDirection RoomDirection = TargetDoor.Direction - Door.Direction;
+			const FIntVector RoomLocation = TargetDoor.Position - Rotate(Door.Position, RoomDirection);
+
+			// Filter out the rooms that does not pass the constraints
+			if (!URoomData::DoesPassAllConstraints(this, RoomData, RoomLocation, RoomDirection))
+				continue;
 
 			FRoomCandidate Candidate;
 			Candidate.Data = RoomData;
 			Candidate.DoorIndex = i;
 
-			// Check if the room can fit
+			// Check if the new bounds placed at the target door can fit
+			const FVoxelBounds NewBounds = Rotate(DataBounds, RoomDirection) + RoomLocation;
 			if (!NewBounds.GetCompatibilityScore(Bounds, Candidate.Score, CustomScore))
 				continue;
 
-			SortedRooms.HeapPush(Candidate, FRoomCandidatePredicate());
+			SortedRooms.HeapPush(Candidate, ::RoomCandidatePredicate);
 		}
 	}
 
@@ -401,7 +444,8 @@ bool UDungeonGraph::FilterAndSortRooms(const TArray<URoomData*>& RoomList, const
 
 FBoxCenterAndExtent UDungeonGraph::GetDungeonBounds(const FTransform& Transform) const
 {
-	return Dungeon::ToWorld(Bounds.GetBounds(), Transform);
+	const FVector RoomUnit = UDungeonSettings::GetRoomUnit(Generator.IsValid() ? Generator->SettingsOverrides : nullptr);
+	return Dungeon::ToWorld(Bounds.GetBounds(), RoomUnit, Transform);
 }
 
 FBoxMinAndMax UDungeonGraph::GetIntBounds() const
@@ -421,6 +465,7 @@ URoom* UDungeonGraph::GetRoomByIndex(int64 Index) const
 
 void UDungeonGraph::Clear()
 {
+	// Call cleanup for each room
 	for (URoom* Room : Rooms)
 	{
 		check(IsValid(Room));
@@ -428,11 +473,13 @@ void UDungeonGraph::Clear()
 		check(IsValid(Data));
 		Data->CleanupRoom(Room, this);
 	}
-	Rooms.Empty();
 
+	// Clear out data
+	Rooms.Empty();
 	RoomConnections.Empty();
 
 	RebuildBounds();
+	RebuildOctree();
 }
 
 int UDungeonGraph::CountRoomByPredicate(TFunction<bool(const URoom*)> Predicate) const
@@ -468,10 +515,11 @@ const URoom* UDungeonGraph::FindFirstRoomByPredicate(TFunction<bool(const URoom*
 	return nullptr;
 }
 
-void UDungeonGraph::TraverseRooms(const TSet<URoom*>& InRooms, TSet<URoom*>* OutRooms, uint32 Distance, TFunction<void(URoom*)> Func)
+void UDungeonGraph::TraverseRooms(const TSet<URoom*>& InRooms, TSet<URoom*>* OutRooms, uint32 Distance, TFunction<void(URoom*, uint32)> Func)
 {
 	TSet<URoom*> openList(InRooms);
 	TSet<URoom*> closedList, currentList;
+	const uint32 MaxDistance = Distance;
 	while (Distance > 0 && openList.Num() > 0)
 	{
 		for (URoom* openRoom : openList)
@@ -481,7 +529,7 @@ void UDungeonGraph::TraverseRooms(const TSet<URoom*>& InRooms, TSet<URoom*>* Out
 		openList.Empty();
 		for (URoom* currentRoom : currentList)
 		{
-			Func(currentRoom);
+			Func(currentRoom, MaxDistance - Distance);
 			for (int i = 0; i < currentRoom->GetConnectionCount(); ++i)
 			{
 				URoom* nextRoom = currentRoom->GetConnectedRoom(i).Get();
@@ -505,24 +553,37 @@ bool BFS_Cycle(TQueue<const URoom*>& Queue, TSet<const URoom*>& MarkedThis, cons
 	const URoom* Next = nullptr;
 
 	Queue.Dequeue(Current);
-	// for each neighbor, if not locked or marked, add it to queue and mark it
-	for (int i = 0; OutCommon == nullptr && i < Current->GetConnectionCount(); ++i)
-	{
-		Next = Current->GetConnectedRoom(i).Get();
-		if (Next && (IgnoreLocked || !Next->IsLocked()) && !MarkedThis.Contains(Next))
-		{
-			ParentMap.Add(Next, Current);
 
-			// Check intersection with other side
-			if (MarkedOther.Contains(Next))
-			{
-				OutCommon = Next;
-			}
-			else
-			{
-				Queue.Enqueue(Next);
-				MarkedThis.Add(Next);
-			}
+	for (const auto& Conn : Current->GetAllConnections())
+	{
+		if (!Conn.IsValid())
+			continue;
+
+		if (!IgnoreLocked && Conn->IsDoorLocked())
+			continue;
+
+		Next = Conn->GetOtherRoom(Current).Get();
+		if (!IsValid(Next))
+			continue;
+
+		if (!IgnoreLocked && Next->IsLocked())
+			continue;
+
+		if (MarkedThis.Contains(Next))
+			continue;
+
+		ParentMap.Add(Next, Current);
+
+		// Check intersection with other side
+		if (MarkedOther.Contains(Next))
+		{
+			OutCommon = Next;
+			break;
+		}
+		else
+		{
+			Queue.Enqueue(Next);
+			MarkedThis.Add(Next);
 		}
 	}
 
@@ -635,6 +696,12 @@ void UDungeonGraph::SynchronizeRooms()
 	{
 		CopyRooms(Rooms, ReplicatedRooms);
 		RebuildBounds();
+		RebuildOctree();
+		DungeonLog_Debug("Synchronized Rooms from server (length: %d)", Rooms.Num());
+		for (const URoom* Room : Rooms)
+		{
+			DungeonLog_Debug(" - %s (Data: %s Valid: %d)", *GetNameSafe(Room), *GetNameSafe(Room->GetRoomData()), IsValid(Room->GetRoomData()));
+		}
 	}
 
 	bIsDirty = false;
@@ -717,11 +784,7 @@ void UDungeonGraph::UnloadAllRooms()
 	{
 		for (auto* RoomConnection : RoomConnections)
 		{
-			ADoor* Door = RoomConnection->GetDoorInstance();
-			if (IsValid(Door))
-			{
-				Door->Destroy();
-			}
+			RoomConnection->DestroyDoor();
 		}
 	}
 
@@ -744,6 +807,24 @@ void UDungeonGraph::RebuildBounds()
 	for (const URoom* Room : Rooms)
 	{
 		UpdateBounds(Room);
+	}
+}
+
+void UDungeonGraph::UpdateOctree(URoom* Room)
+{
+	check(IsValid(Room));
+	for (int i = 0; i < Room->GetSubBoundsCount(); ++i)
+	{
+		Octree.AddElement(FDungeonOctreeElement(Room, i));
+	}
+}
+
+void UDungeonGraph::RebuildOctree()
+{
+	Octree.Destroy();
+	for (URoom* Room : Rooms)
+	{
+		UpdateOctree(Room);
 	}
 }
 

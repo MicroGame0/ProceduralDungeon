@@ -1,4 +1,4 @@
-// Copyright Benoit Pelletier 2019 - 2025 All Rights Reserved.
+// Copyright Benoit Pelletier 2019 - 2026 All Rights Reserved.
 //
 // This software is available under different licenses depending on the source from which it was obtained:
 // - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
@@ -19,9 +19,10 @@
 #include "VoxelBounds/VoxelBounds.h"
 #include "Room.generated.h"
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FRelevancyEvent, URoom*, Room, APlayerController*, PlayerController, int32, NewRelevancyLevel);
+
 class ADungeonGeneratorBase;
 class ARoomLevel;
-class ADoor;
 class URoomCustomData;
 class ULevelStreamingDynamic;
 
@@ -55,7 +56,7 @@ public:
 	EDoorDirection Direction {EDoorDirection::NbDirection};
 
 	//~ Begin IReadOnlyRoom Interface
-	virtual const URoomData* GetRoomData() const override { return RoomData.Get(); }
+	virtual const URoomData* GetRoomData() const override { return RoomData; }
 	virtual int64 GetRoomID() const override { return Id; }
 	virtual FIntVector GetPosition() const { return Position; }
 	virtual EDoorDirection GetDirection() const { return Direction; }
@@ -76,15 +77,16 @@ public:
 	//~ End IDungeonSaveInterface Interface
 
 	const ADungeonGeneratorBase* Generator() const { return GeneratorOwner.Get(); }
-	void SetPlayerInside(bool PlayerInside);
-	void SetVisible(bool Visible);
+	void SetPlayerInside(int32 PlayerID, bool PlayerInside);
+	void SetVisible(bool Visible, bool bForceUpdate = false);
+	void SetRelevancyLevel(int32 PlayerID, int32 Level);
 	FORCEINLINE bool IsReady() const { return RoomData != nullptr; }
 
 	// Is the player currently inside the room?
 	// A player can be in multiple rooms at once, for example when he stands at the door frame,
 	// the player's capsule is in both rooms.
 	UFUNCTION(BlueprintPure, Category = "Room")
-	FORCEINLINE bool IsPlayerInside() const { return bPlayerInside; }
+	bool IsPlayerInside(const APlayerController* PlayerController = nullptr) const;
 
 	// Is the room currently visible?
 	UFUNCTION(BlueprintPure, Category = "Room", meta = (CompactNodeTitle = "Is Visible"))
@@ -93,6 +95,29 @@ public:
 	// Force the room to be veisible
 	UFUNCTION(BlueprintCallable, Category = "Room")
 	void ForceVisibility(bool bForce);
+
+	// Get the relevancy level for the specified player.
+	// A relevancy level < 0 means the room is not relevant for the player.
+	// A relevancy level of 0 means the player is inside the room.
+	// A relevancy level > 0 means the player is outside the room, the higher the level, the further away the room is.
+	UFUNCTION(BlueprintPure, Category = "Room")
+	int32 GetRelevancyLevel(APlayerController* PlayerController) const;
+
+	// Get the maximum relevancy level for this room.
+	// The highest value, the farthest the room is from any player.
+	// A value < 0 means no player has this room as relevant.
+	UFUNCTION(BlueprintPure, Category = "Room")
+	int32 GetMaxRelevancyLevel() const;
+
+	// Get minimum relevancy level for this room.
+	// The lowest value, the closest the room is from any player.
+	// A value < 0 means no player has this room as relevant.
+	UFUNCTION(BlueprintPure, Category = "Room")
+	int32 GetMinRelevancyLevel() const;
+
+	// Get all relevancy levels for this room.
+	UFUNCTION(BlueprintPure, Category = "Room")
+	void GetAllRelevancyLevels(TMap<APlayerController*, int32>& OutRelevancyLevels) const;
 
 	// Is the room locked?
 	// If it is, the doors will be locked (except if they have `Alway Unlocked`).
@@ -132,12 +157,12 @@ public:
 	// @param DoorIndex The index of the door to retrieve.
 	// @return The door actor at the index, or null if the index is out of range.
 	UFUNCTION(BlueprintCallable, Category = "Room")
-	ADoor* GetDoor(int32 DoorIndex) const;
+	AActor* GetDoor(int32 DoorIndex) const;
 
 	// Fill an array with all the door actors connected to the room.
 	// @param OutDoors THIS IS NOT AN INPUT! This array will be emptied and then filled with the door actors. This is your result!
 	UFUNCTION(BlueprintPure = false, Category = "Room")
-	void GetAllDoors(UPARAM(ref) TArray<ADoor*>& OutDoors) const;
+	void GetAllDoors(UPARAM(ref) TArray<AActor*>& OutDoors) const;
 
 	// Returns true if the door at DoorIndex is connected to another room.
 	// @param DoorIndex The index of the door to check.
@@ -160,11 +185,28 @@ public:
 	// Returns the door actor shared with the provided room.
 	// Returns null if the provided room is not connected with this.
 	UFUNCTION(BlueprintPure, Category = "Room")
-	void GetDoorsWith(const URoom* OtherRoom, TArray<ADoor*>& Doors) const;
+	void GetDoorsWith(const URoom* OtherRoom, TArray<AActor*>& Doors) const;
+
+	// Returns all the connections of this room.
+	UFUNCTION(BlueprintPure, Category = "Room")
+	TArray<URoomConnection*> GetConnections() const;
+
+public:
+	UPROPERTY(BlueprintAssignable, Category = "Room|Events")
+	FRelevancyEvent OnRelevancyChanged;
 
 private:
-	UPROPERTY(ReplicatedUsing = OnRep_RoomData, SaveGame)
-	TSoftObjectPtr<URoomData> RoomData {nullptr};
+	// Deprecate old way of storing RoomData.
+	// Must not be used anywhere else than in serialization code.
+	// It has been renamed SoftRoomData, because despite the DEPRECATED suffix,
+	// the engine treats RoomData_DEPRECATED as RoomData, and thus conflicting with the below one.
+	UPROPERTY(SaveGame, Transient, meta=(DeprecatedProperty))
+	TSoftObjectPtr<URoomData> SoftRoomData_DEPRECATED {nullptr};
+
+	// New way to store RoomData.
+	// It must be a hard reference to avoid it being garbage collected on clients.
+	UPROPERTY(ReplicatedUsing = OnRep_RoomData)
+	URoomData* RoomData {nullptr};
 
 	UPROPERTY(Replicated, Transient)
 	TArray<FCustomDataPair> CustomData;
@@ -178,9 +220,10 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_Id, SaveGame)
 	int64 Id {-1};
 
-	bool bPlayerInside {false};
+	TSet<int32> PlayerIDInside {};
 	bool bIsVisible {true};
 	bool bForceVisible {false};
+	TMap<int32, int32> RelevancyLevels {};
 
 	UPROPERTY(ReplicatedUsing = OnRep_IsLocked, SaveGame)
 	bool bIsLocked {false};
@@ -193,8 +236,6 @@ protected:
 	virtual void RegisterReplicableSubobjects(bool bRegister) override;
 	//~ End UReplicableObject Interface
 
-	void SetPosition(const FIntVector& NewPosition);
-	void SetDirection(EDoorDirection NewDirection);
 	void UpdateVisibility() const;
 
 	UFUNCTION() // Needed macro for replication to work
@@ -232,6 +273,7 @@ public:
 	TWeakObjectPtr<URoom> GetConnectedRoom(int32 DoorIndex) const;
 	int32 GetFirstEmptyConnection() const;
 	void GetAllEmptyConnections(TArray<int32>& EmptyConnections) const;
+	const TArray<TWeakObjectPtr<URoomConnection>>& GetAllConnections() const { return Connections; } 
 
 	bool IsDoorIndexValid(int32 DoorIndex) const;
 	int32 GetDoorIndexAt(FIntVector WorldPos, EDoorDirection WorldRot) const;
@@ -252,6 +294,9 @@ public:
 	FDoorDef RoomToWorld(const FDoorDef& RoomDoor) const;
 	FVoxelBounds WorldToRoom(const FVoxelBounds& WorldBounds) const;
 	FVoxelBounds RoomToWorld(const FVoxelBounds& RoomBounds) const;
+
+	void SetPosition(const FIntVector& NewPosition);
+	void SetDirection(EDoorDirection NewDirection);
 	void SetRotationFromDoor(int DoorIndex, EDoorDirection WorldRot);
 	void SetPositionFromDoor(int DoorIndex, FIntVector WorldPos);
 	void SetPositionAndRotationFromDoor(int DoorIndex, FIntVector WorldPos, EDoorDirection WorldRot);
@@ -259,15 +304,11 @@ public:
 
 	FTransform GetTransform() const;
 	FBoxCenterAndExtent GetBounds() const;
+	int32 GetSubBoundsCount() const;
+	FBoxCenterAndExtent GetSubBounds(int32 Index) const;
 	FBoxCenterAndExtent GetLocalBounds() const;
 	FBoxMinAndMax GetIntBounds() const;
 	FVoxelBounds GetVoxelBounds() const;
-
-	// AABB Overlapping
-	static bool Overlap(const URoom& A, const URoom& B);
-	static bool Overlap(const URoom& Room, const TArray<URoom*>& RoomList);
-
-	static URoom* GetRoomAt(FIntVector RoomCell, const TArray<URoom*>& RoomList);
 
 private:
 	// Utility functions to load/unload level instances

@@ -23,6 +23,7 @@
 #include "Components/BoxComponent.h"
 #include "RoomVisibilityComponent.h"
 #include "RoomVisitor.h"
+#include "Utils/ReplicationUtils.h"
 
 #if WITH_EDITOR
 bool ARoomLevel::bIsDungeonEditorMode = false;
@@ -32,6 +33,8 @@ ARoomLevel::ARoomLevel(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 	PrimaryActorTick.bCanEverTick = true;
+	bReplicates = false;
+	SetNetUpdateFrequency(10);
 	bIsInit = false;
 	Room = nullptr;
 	DungeonTransform = FTransform::Identity;
@@ -148,7 +151,7 @@ void ARoomLevel::Tick(float DeltaTime)
 			DrawDebugSphere(World, DungeonTransform.TransformPositionNoScale(RoomTransform.GetLocation()), 100.0f, 4, FColor::Magenta);
 
 		// Room bounds
-		DrawDebugBox(World, GetBoundsCenter(), GetBoundsExtent(), DungeonTransform.GetRotation(), IsPlayerInside() ? FColor::Green : FColor::Red);
+		Data->DrawDebug(World, RoomTransform * DungeonTransform, IsPlayerInside() ? FColor::Green : FColor::Red);
 
 		if (bIsRoomLocked)
 		{
@@ -171,15 +174,15 @@ void ARoomLevel::Tick(float DeltaTime)
 		{
 			const bool bIsConnected = !bIsRoomValid || (bIsRoomDataValid && Room->IsConnected(i));
 			const bool bIsDoorValid = Data->IsDoorValid(i) && !Data->IsDoorDuplicate(i);
-			FDoorDef::DrawDebug(World, Data->Doors[i], RoomTransform * DungeonTransform, /*bIncludeOffset = */ true, bIsDoorValid && bIsConnected);
+			FDoorDef::DrawDebug(World, Data->Doors[i], Data->GetRoomUnit(), RoomTransform * DungeonTransform, /*bIncludeOffset = */ true, bIsDoorValid && bIsConnected);
 		}
 	}
 #endif // ENABLE_DRAW_DEBUG
 }
 
-bool ARoomLevel::IsPlayerInside()
+bool ARoomLevel::IsPlayerInside(const APlayerController* PlayerController)
 {
-	return IsValid(Room) ? Room->IsPlayerInside() : false;
+	return IsValid(Room) ? Room->IsPlayerInside(PlayerController) : false;
 }
 
 bool ARoomLevel::IsVisible()

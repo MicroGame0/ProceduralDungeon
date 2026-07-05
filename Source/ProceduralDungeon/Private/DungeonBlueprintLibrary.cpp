@@ -1,4 +1,4 @@
-// Copyright Benoit Pelletier 2023 - 2025 All Rights Reserved.
+// Copyright Benoit Pelletier 2023 - 2026 All Rights Reserved.
 //
 // This software is available under different licenses depending on the source from which it was obtained:
 // - The Fab EULA (https://fab.com/eula) applies when obtained from the Fab marketplace.
@@ -6,21 +6,30 @@
 // Please refer to the accompanying LICENSE file for further details.
 
 #include "DungeonBlueprintLibrary.h"
-#include "Door.h"
+#include "Interfaces/DoorInterface.h"
 #include "DoorType.h"
 #include "ProceduralDungeonUtils.h"
+#include "GameFramework/Actor.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/Pawn.h"
-#include "Roomlevel.h"
+#include "RoomLevel.h"
 #include "Room.h"
 #include "RoomCustomData.h"
 #include "Engine/Engine.h" // GEngine
 
-bool UDungeonBlueprintLibrary::IsDoorOfType(const TSubclassOf<ADoor> DoorClass, const UDoorType* DoorType)
+bool UDungeonBlueprintLibrary::IsDoorOfType(const TSubclassOf<AActor> DoorClass, const UDoorType* DoorType)
 {
-	ADoor* Door = DoorClass.GetDefaultObject();
-	return Door && (Door->GetDoorType() == DoorType);
+	AActor* Door = DoorClass.GetDefaultObject();
+	if (!IsValid(Door))
+		return false;
+
+	UObject* Implementer = ActorUtils::GetInterfaceImplementer<UDoorInterface>(Door);
+	if (!IsValid(Implementer))
+		return DoorType == nullptr;
+
+	const UDoorType* ActualDoorType = IDoorInterface::Execute_GetDoorType(Implementer);
+	return ActualDoorType == DoorType;
 }
 
 bool UDungeonBlueprintLibrary::CompareDataTableRows(const FDataTableRowHandle& A, const FDataTableRowHandle& B)
@@ -28,14 +37,14 @@ bool UDungeonBlueprintLibrary::CompareDataTableRows(const FDataTableRowHandle& A
 	return A == B;
 }
 
-URoom* UDungeonBlueprintLibrary::GetOwningRoom(const AActor* Target)
+const ARoomLevel* UDungeonBlueprintLibrary::GetLevelScript(const AActor* Target)
 {
 	if (!IsValid(Target))
 		return nullptr;
 
 	if (const ARoomLevel* SelfLevel = Cast<ARoomLevel>(Target))
 	{
-		return SelfLevel->Room;
+		return SelfLevel;
 	}
 
 	ULevel* Level = Target->GetLevel();
@@ -46,7 +55,16 @@ URoom* UDungeonBlueprintLibrary::GetOwningRoom(const AActor* Target)
 	if (!IsValid(RoomLevel))
 		return nullptr;
 
-	return RoomLevel->GetRoom();
+	return RoomLevel;
+}
+
+URoom* UDungeonBlueprintLibrary::GetOwningRoom(const AActor* Target)
+{
+	if (const ARoomLevel* SelfLevel = GetLevelScript(Target))
+	{
+		return SelfLevel->GetRoom();
+	}
+	return nullptr;
 }
 
 bool UDungeonBlueprintLibrary::GetOwningRoomCustomData(const AActor* Target, TSubclassOf<URoomCustomData> CustomDataClass, URoomCustomData*& CustomData)
@@ -58,6 +76,15 @@ bool UDungeonBlueprintLibrary::GetOwningRoomCustomData(const AActor* Target, TSu
 
 	OwningRoom->GetCustomData(CustomDataClass, CustomData);
 	return IsValid(CustomData);
+}
+
+const URoomData* UDungeonBlueprintLibrary::GetLevelRoomData(const AActor* Target)
+{
+	if (const ARoomLevel* SelfLevel = GetLevelScript(Target))
+	{
+		return SelfLevel->GetRoomData();
+	}
+	return nullptr;
 }
 
 FDoorDef UDungeonBlueprintLibrary::DoorDef_GetOpposite(const FDoorDef& DoorDef)
